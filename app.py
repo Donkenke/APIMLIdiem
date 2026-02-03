@@ -203,17 +203,33 @@ def render_tender_row(tender, index):
     tender_id = tender.get('CodigoExterno', 'N/A')
     nombre = tender.get('Nombre', 'Sin título')
     
-    # Extract nested data safely
-    comprador = tender.get('Comprador', {}) or {}
-    fechas = tender.get('Fechas', {}) or {}
+    # Extract nested data safely - handle both dict and None cases
+    comprador = tender.get('Comprador')
+    if not isinstance(comprador, dict):
+        comprador = {}
     
-    org_name = safe_get(comprador, 'NombreOrganismo', 'No indicado')
-    unit_name = safe_get(comprador, 'NombreUnidad', 'No indicado')
-    region = safe_get(comprador, 'RegionUnidad', '')
+    fechas = tender.get('Fechas')
+    if not isinstance(fechas, dict):
+        fechas = {}
     
-    # Dates
-    fecha_inicio = format_datetime(fechas.get('FechaInicio', ''))
-    fecha_cierre = format_datetime(fechas.get('FechaCierre', ''))
+    # Extract comprador fields with fallbacks
+    org_name = comprador.get('NombreOrganismo', None)
+    if not org_name:
+        org_name = 'Organismo no indicado'
+    
+    unit_name = comprador.get('NombreUnidad', None)
+    if not unit_name:
+        unit_name = 'Unidad no indicada'
+    
+    region = comprador.get('RegionUnidad', '')
+    
+    # Extract dates with fallbacks
+    fecha_inicio = fechas.get('FechaInicio', None)
+    fecha_cierre = fechas.get('FechaCierre', None)
+    
+    # Format dates
+    fecha_inicio_fmt = format_datetime(fecha_inicio) if fecha_inicio else ''
+    fecha_cierre_fmt = format_datetime(fecha_cierre) if fecha_cierre else ''
     
     # Categories
     categories = tender.get('CategoriasIDIEM', [])
@@ -243,8 +259,8 @@ def render_tender_row(tender, index):
             <div class="org-unit">{unit_name}</div>
         </div>
         <div>
-            {f'<div class="date-label">Inicio: {fecha_inicio}</div>' if fecha_inicio else ''}
-            {f'<div class="date-value">Cierre: {fecha_cierre}</div>' if fecha_cierre else '<div class="date-label">Sin cierre</div>'}
+            {f'<div class="date-label">Inicio: {fecha_inicio_fmt}</div>' if fecha_inicio_fmt else ''}
+            {f'<div class="date-value">Cierre: {fecha_cierre_fmt}</div>' if fecha_cierre_fmt else '<div class="date-label">Sin fecha cierre</div>'}
         </div>
         <div style="display: flex; gap: 6px; align-items: center;">
     """, unsafe_allow_html=True)
@@ -295,6 +311,9 @@ def main():
         # Days to scan
         days = st.slider("📅 Días a escanear", 1, 7, 2)
         
+        # Debug mode
+        debug_mode = st.checkbox("🐛 Modo Debug", value=False)
+        
         st.markdown("---")
         st.markdown("#### Filtros Activos")
         st.info("Laboratorio, Geotecnia, Ingeniería, ITO")
@@ -323,6 +342,11 @@ def main():
             st.warning("No se encontraron licitaciones con los criterios configurados.")
         else:
             st.success(f"✅ {len(tenders)} licitaciones encontradas")
+            
+            # Debug mode - show first tender structure
+            if debug_mode and tenders:
+                with st.expander("🔍 Ver estructura del primer tender"):
+                    st.json(tenders[0])
             
             # Render table
             render_table_header()
