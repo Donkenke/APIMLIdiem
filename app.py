@@ -1,362 +1,305 @@
 import streamlit as st
 import requests
 import pandas as pd
+import sqlite3
 from datetime import datetime, timedelta
 import textwrap
 import time
 
 # --- CONFIGURACIÓN DE PÁGINA ---
-st.set_page_config(
-    layout="wide",
-    page_title="Monitor de Licitaciones",
-    page_icon="🏢",
-    initial_sidebar_state="expanded"
-)
+st.set_page_config(layout="wide", page_title="Monitor de Licitaciones", page_icon="🏢")
 
-# --- ESTADO DE SESIÓN (Persistencia de Marcadores) ---
-if 'saved_tenders' not in st.session_state:
-    st.session_state.saved_tenders = []
+# --- DATABASE SETUP (PERSISTENCIA REAL) ---
+DB_FILE = "tenders_data.db"
 
-# --- CONFIGURACIÓN DE CATEGORÍAS (Lógica IDIEM) ---
-CATEGORIES = {
-    "Laboratorio/Materiales": ["laboratorio", "ensayo", "hormigón", "probeta", "asfalto", "áridos", "cemento"],
-    "Geotecnia/Suelos": ["geotecnia", "suelo", "calicata", "sondaje", "mecánica de suelo", "estratigrafía"],
-    "Ingeniería/Estructuras": ["estructura", "cálculo", "diseño ingeniería", "sísmico", "patología", "puente", "viaducto"],
-    "Inspección Técnica (ITO)": ["ito", "inspección técnica", "supervisión", "fiscalización de obra", "hito"]
-}
+def init_db():
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    # Tabla para tracking de estados por licitación
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS tender_status (
+            id TEXT PRIMARY KEY,
+            visto BOOLEAN DEFAULT 0,
+            guardado BOOLEAN DEFAULT 0,
+            first_seen_date TEXT
+        )
+    ''')
+    conn.commit()
+    conn.close()
 
-# --- ESTILOS CSS (Clean UI) ---
+def get_status_dict(tender_ids):
+    """Obtiene el estado de múltiples IDs de una sola vez."""
+    conn = sqlite3.connect(DB_FILE)
+    placeholders = ',' .join('?' for _ in tender_ids)
+    query = f"SELECT id, visto, guardado FROM tender_status WHERE id IN ({placeholders})"
+    df = pd.read_sql_query(query, conn, params=tuple(tender_ids))
+    conn.close()
+    
+    # Convertir a diccionario para búsqueda rápida
+    status_map = {}
+    if not df.empty:
+        for _, row in df.iterrows():
+            status_map[str(row['id'])] = {'visto': bool(row['visto']), 'guardado': bool(row['guardado'])}
+    return status_map
+
+def update_status(tender_id, field, value):
+    """Actualiza Visto o Guardado en la BD."""
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    
+    # Upsert logic (Insertar si no existe, actualizar si existe)
+    c.execute("SELECT id FROM tender_status WHERE id = ?", (tender_id,))
+    exists = c.fetchone()
+    
+    if not exists:
+        today = datetime.now().strftime("%Y-%m-%d %H:%M")
+        c.execute("INSERT INTO tender_status (id, visto, guardado, first_seen_date) VALUES (?, 0, 0, ?)", (tender_id, today))
+    
+    query = f"UPDATE tender_status SET {field} = ? WHERE id = ?"
+    c.execute(query, (1 if value else 0, tender_id))
+    conn.commit()
+    conn.close()
+
+# Inicializar DB al arranque
+init_db()
+
+# --- ESTILOS CSS (Row Layout) ---
 st.markdown("""
 <style>
-    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
-
-    .stApp { background-color: #F9FAFB; font-family: 'Inter', sans-serif; color: #111827; }
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap');
     
-    /* Tabs */
-    .stTabs [data-baseweb="tab-list"] { gap: 8px; }
-    .stTabs [data-baseweb="tab"] {
-        height: 45px;
-        background-color: #FFFFFF;
+    .stApp { background-color: #F8F9FA; font-family: 'Inter', sans-serif; }
+    
+    /* Fila de Tabla Custom */
+    .tender-row {
+        background-color: white;
+        border: 1px solid #E5E7EB;
         border-radius: 6px;
-        padding: 0 16px;
-        color: #6B7280;
-        font-weight: 500;
-        border: 1px solid #E5E7EB;
+        padding: 12px 16px;
+        margin-bottom: 8px;
+        display: flex;
+        align-items: center;
+        gap: 15px;
+        transition: background 0.2s;
     }
-    .stTabs [aria-selected="true"] {
-        background-color: #EFF6FF;
-        color: #2563EB;
-        border-color: #BFDBFE;
-    }
-
-    /* Cards */
-    .tender-card {
-        background-color: #FFFFFF;
-        border: 1px solid #E5E7EB;
-        border-radius: 8px;
-        padding: 20px;
-        margin-bottom: 16px;
-        box-shadow: 0 1px 2px rgba(0,0,0,0.05);
-        transition: box-shadow 0.2s;
-    }
-    .tender-card:hover {
-        box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
-        border-color: #93C5FD;
-    }
-
-    /* Typography inside Card */
-    .card-header-row { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
-    .card-id { font-family: monospace; font-size: 0.8rem; color: #2563EB; background: #EFF6FF; padding: 2px 8px; border-radius: 4px; border: 1px solid #DBEAFE; }
-    .card-title { font-size: 1.1rem; font-weight: 600; color: #111827; line-height: 1.4; margin-bottom: 8px; }
+    .tender-row:hover { background-color: #F9FAFB; border-color: #D1D5DB; }
     
-    /* Metadata Grid */
-    .meta-grid { display: flex; flex-wrap: wrap; gap: 16px; font-size: 0.85rem; color: #4B5563; margin-top: 12px; border-top: 1px solid #F3F4F6; padding-top: 12px; }
-    .meta-item { display: flex; align-items: center; gap: 6px; }
-    .meta-icon { font-size: 1rem; }
-
+    .col-id { min-width: 100px; font-family: monospace; font-size: 0.8rem; color: #6B7280; }
+    .col-name { flex-grow: 1; font-weight: 600; color: #1F2937; font-size: 0.95rem; }
+    .col-org { width: 200px; font-size: 0.8rem; color: #4B5563; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .col-date { width: 120px; font-size: 0.8rem; color: #DC2626; text-align: right; }
+    
     /* Tags */
-    .cat-tag { 
-        font-size: 0.75rem; 
-        padding: 2px 8px; 
-        border-radius: 12px; 
-        background-color: #FEF3C7; 
-        color: #92400E; 
-        border: 1px solid #FDE68A;
-        margin-right: 4px;
-        display: inline-block;
-        font-weight: 600;
-    }
+    .tag-cat { font-size: 0.7rem; background: #EFF6FF; color: #2563EB; padding: 2px 6px; border-radius: 4px; margin-right: 4px; }
+    
+    /* Botones invisibles en CSS, manejados por Streamlit */
+    .stButton button { border: none; background: transparent; padding: 0; }
 </style>
 """, unsafe_allow_html=True)
 
-# --- HELPER FUNCTIONS ---
+# --- CONFIGURACIÓN DE CATEGORÍAS ---
+CATEGORIES = {
+    "Laboratorio": ["laboratorio", "ensayo", "hormigón", "suelo", "asfalto"],
+    "Ingeniería": ["ingeniería", "cálculo", "diseño", "estructural", "consultoría"],
+    "ITO": ["ito", "inspección", "fiscalización", "supervisión"]
+}
 
-def get_relative_time(date_str):
-    if not date_str: return ""
+# --- FUNCIONES API ---
+
+@st.cache_data(ttl=3600)
+def fetch_ocds_rich_data(code):
+    """Trae datos OCDS para el detalle técnico"""
+    url = f"https://api.mercadopublico.cl/APISOCDS/OCDS/record/{code}"
     try:
-        # Try full ISO format first
-        dt = datetime.strptime(date_str, "%Y-%m-%dT%H:%M:%S")
+        r = requests.get(url, timeout=3)
+        return r.json() if r.status_code == 200 else None
     except:
-        try:
-            # Try simple date
-            dt = datetime.strptime(date_str, "%Y-%m-%d")
-        except:
-            return date_str
-            
-    now = datetime.now()
-    diff = now - dt
-    
-    if diff < timedelta(minutes=1): return "Hace un instante"
-    if diff < timedelta(hours=1): return f"Hace {int(diff.seconds/60)} min"
-    if diff < timedelta(hours=24): return f"Hace {int(diff.seconds/3600)} h"
-    if diff < timedelta(days=2): return "Ayer"
-    if diff < timedelta(days=7): return f"Hace {diff.days} días"
-    return dt.strftime("%d/%m/%Y")
-
-def categorize_tender(text):
-    text_lower = text.lower()
-    detected = []
-    for cat_name, keywords in CATEGORIES.items():
-        if any(k in text_lower for k in keywords):
-            detected.append(cat_name)
-    return detected
-
-def toggle_save_tender(tender_data):
-    # Check if exists
-    code = tender_data['CodigoExterno']
-    exists = next((t for t in st.session_state.saved_tenders if t['CodigoExterno'] == code), None)
-    
-    if exists:
-        st.session_state.saved_tenders.remove(exists)
-        st.toast(f"Eliminado: {code}")
-    else:
-        st.session_state.saved_tenders.append(tender_data)
-        st.toast(f"Guardado: {code}")
-
-# --- API FETCHING ---
+        return None
 
 @st.cache_data(ttl=3600)
 def fetch_product_category_name(uri, product_code):
-    """Deep fetch: Navigates to the URI to get the real Category name."""
-    if not uri or "mercadopublico.cl" not in uri: return None
+    """Obtiene nombre real del producto desde la URI"""
+    if not uri or "mercadopublico" not in uri: return None
     try:
         r = requests.get(uri, timeout=3)
         if r.status_code == 200:
             data = r.json()
-            # Look for the product code match in the list
             for prod in data.get('Productos', []):
                 if str(prod.get('CodigoProducto')) == str(product_code):
                     return prod.get('NombreProducto')
-            # Fallback: Return the Category Name if product specific not found
             return data.get('NombreCategoria')
     except:
         return None
-    return None
 
 @st.cache_data(ttl=1800, show_spinner=False)
-def fetch_daily_feed(ticket, days_back=3):
-    all_tenders = []
-    pbar = st.progress(0, text="Consultando MercadoPúblico...")
-    
-    for i in range(days_back):
-        date_query = (datetime.now() - timedelta(days=i)).strftime("%d%m%Y")
+def fetch_api_feed(ticket, days=3):
+    tenders = []
+    pbar = st.progress(0, text="Cargando datos...")
+    for i in range(days):
+        date_q = (datetime.now() - timedelta(days=i)).strftime("%d%m%Y")
         url = "https://api.mercadopublico.cl/servicios/v1/publico/licitaciones.json"
-        
         try:
-            r = requests.get(url, params={'fecha': date_query, 'ticket': ticket}, timeout=8)
+            r = requests.get(url, params={'fecha': date_q, 'ticket': ticket}, timeout=6)
             if r.status_code == 200:
-                data = r.json()
-                tenders = data.get("Listado", [])
-                
-                # Enrich with a default creation date if missing (for UI sorting)
-                fallback_date = (datetime.now() - timedelta(days=i)).strftime("%Y-%m-%dT09:00:00")
-                for t in tenders:
-                    if not t.get('FechaCreacion'):
-                        t['FechaCreacion'] = fallback_date
-                
-                all_tenders.extend(tenders)
-        except Exception:
-            pass
-        
-        pbar.progress((i + 1) / days_back)
-        
+                data = r.json().get("Listado", [])
+                # Agregar fecha fake si falta para ordenar
+                creation_fallback = (datetime.now() - timedelta(days=i)).strftime("%Y-%m-%dT09:00:00")
+                for t in data:
+                    if not t.get('FechaCreacion'): t['FechaCreacion'] = creation_fallback
+                tenders.extend(data)
+        except: pass
+        pbar.progress((i+1)/days)
     pbar.empty()
-    return all_tenders
+    return tenders
 
-@st.cache_data(ttl=3600, show_spinner=False)
-def fetch_ocds_data(code):
-    url = f"https://api.mercadopublico.cl/APISOCDS/OCDS/record/{code}"
-    try:
-        r = requests.get(url, timeout=5)
-        if r.status_code == 200:
-            return r.json()
-    except:
-        pass
-    return None
+def categorize(text):
+    text = text.lower()
+    return [cat for cat, kws in CATEGORIES.items() if any(kw in text for kw in kws)]
 
-# --- MAIN APP UI ---
+# --- INTERFAZ PRINCIPAL ---
 
 with st.sidebar:
     st.header("Configuración")
+    ticket = st.secrets.get("MP_TICKET") or st.text_input("API Ticket", type="password")
+    if not ticket: st.warning("Ingresa Ticket"); st.stop()
     
-    ticket_val = st.secrets.get("MP_TICKET", "")
-    if not ticket_val:
-        ticket_val = st.text_input("Ticket API", type="password")
-        if not ticket_val:
-            st.warning("Se requiere Ticket API")
-            st.stop()
-            
-    days_slider = st.slider("Días a revisar", 1, 7, 2)
-    search_query = st.text_input("Filtrar por texto")
+    days = st.slider("Días", 1, 5, 2)
+    search = st.text_input("Filtrar texto")
     
     st.divider()
-    st.metric("Guardados", len(st.session_state.saved_tenders))
+    
+    # Exportar DB
+    conn = sqlite3.connect(DB_FILE)
+    df_db = pd.read_sql_query("SELECT * FROM tender_status WHERE guardado = 1", conn)
+    conn.close()
+    st.download_button("📥 Descargar Guardados (CSV)", df_db.to_csv(index=False), "guardados.csv")
 
 st.title("Monitor de Licitaciones")
-tab1, tab2 = st.tabs(["📡 Feed en Vivo", "🔖 Mis Marcadores"])
 
-# --- TAB 1: FEED ---
-with tab1:
-    raw_list = fetch_daily_feed(ticket_val, days_slider)
+# Tabs
+tab_all, tab_saved = st.tabs(["Listado General", "Solo Guardados"])
+
+def render_list(is_saved_view_only=False):
+    # 1. Obtener Datos API
+    if is_saved_view_only:
+        # Modo "Solo Guardados": Usamos la DB como fuente principal
+        conn = sqlite3.connect(DB_FILE)
+        saved_ids = pd.read_sql_query("SELECT id FROM tender_status WHERE guardado = 1", conn)['id'].tolist()
+        conn.close()
+        
+        # Como la API pública no permite buscar por ID masivo fácilmente sin loop,
+        # aquí hacemos un fetch general (cacheado) y filtramos.
+        # *Nota: En producción real, deberías guardar el JSON completo en la DB para no depender de la API histórica.*
+        raw_feed = fetch_api_feed(ticket, 7) # Buscamos 7 días atrás para intentar encontrar los guardados
+        filtered_feed = [t for t in raw_feed if t['CodigoExterno'] in saved_ids]
+    else:
+        # Modo General
+        filtered_feed = fetch_api_feed(ticket, days)
+
+    # 2. Obtener Estados de DB (Batch)
+    current_ids = [t['CodigoExterno'] for t in filtered_feed]
+    status_map = get_status_dict(current_ids)
     
-    # Filter
-    filtered_list = []
-    terms = [x.strip().lower() for x in search_query.split(",")] if search_query else []
-    
-    for item in raw_list:
-        # Robust Data Extraction
-        buyer = item.get('Comprador') or {} # Handle None
-        if not isinstance(buyer, dict): buyer = {} # Handle weird API responses
-        
-        org_name = buyer.get('NombreOrganismo', 'Organismo Desconocido')
-        region_name = buyer.get('RegionUnidad', 'Región no especificada')
-        
-        # Text for searching
-        full_text = (str(item.get('Nombre')) + str(item.get('Descripcion')) + org_name).lower()
-        
-        # Categorization
-        cats = categorize_tender(full_text)
-        item['calculated_cats'] = cats # Store for display
-        item['clean_org'] = org_name
-        item['clean_region'] = region_name
-        
-        if terms:
-            if not any(term in full_text for term in terms):
-                continue
-        
-        filtered_list.append(item)
-        
-    st.caption(f"Mostrando {len(filtered_list)} licitaciones.")
+    # 3. Filtrar Texto (Frontend)
+    if search:
+        terms = [s.strip().lower() for s in search.split(",")]
+        filtered_feed = [t for t in filtered_feed if any(term in (str(t.get('Nombre'))+str(t.get('Descripcion'))).lower() for term in terms)]
 
-    if not filtered_list:
-        st.info("No hay resultados.")
-        
-    for tender in filtered_list:
-        code = tender.get('CodigoExterno')
-        is_saved = any(t['CodigoExterno'] == code for t in st.session_state.saved_tenders)
-        
-        # Formats
-        creation_human = get_relative_time(tender.get('FechaCreacion'))
-        
-        close_raw = tender.get('FechaCierre', '')
-        try:
-            close_human = datetime.strptime(close_raw, "%Y-%m-%dT%H:%M:%S").strftime("%d/%m/%Y %H:%M")
-        except:
-            close_human = "Sin fecha"
-            
-        # Cat HTML
-        cat_html = " ".join([f"<span class='cat-tag'>{c}</span>" for c in tender.get('calculated_cats', [])])
-        
-        desc_short = textwrap.shorten(tender.get('Descripcion', ''), width=220, placeholder="...")
+    # 4. Render Grid Headers
+    if not filtered_feed:
+        st.info("No hay datos para mostrar.")
+        return
 
-        # --- THE FIX: No indentation in the f-string HTML ---
-        html_card = f"""
-<div class="tender-card">
-<div class="card-header-row">
-<div><span class="card-id">{code}</span> <span style="font-size:0.8rem; color:#6B7280; margin-left:8px;">{creation_human}</span></div>
-<div style="font-size:0.75rem; font-weight:700; color:#059669; background:#D1FAE5; padding:2px 8px; border-radius:12px;">{tender.get('Estado')}</div>
-</div>
-<div class="card-title">{tender.get('Nombre')}</div>
-<div style="margin-bottom:8px;">{cat_html}</div>
-<div style="font-size:0.9rem; color:#374151; margin-bottom:12px;">{desc_short}</div>
-<div class="meta-grid">
-<div class="meta-item"><span class="meta-icon">🏢</span> {tender['clean_org']}</div>
-<div class="meta-item"><span class="meta-icon">📍</span> {tender['clean_region']}</div>
-<div class="meta-item" style="color:#DC2626;"><span class="meta-icon">⏳</span> Cierre: {close_human}</div>
-</div>
-</div>
-"""
-        st.markdown(html_card, unsafe_allow_html=True)
+    # Header de columnas simulado
+    st.markdown("""
+    <div style="display:flex; padding:0 16px; margin-bottom:8px; font-weight:bold; color:#6B7280; font-size:0.8rem;">
+        <div style="min-width:100px;">ID</div>
+        <div style="flex-grow:1;">LICITACIÓN</div>
+        <div style="width:200px;">ORGANISMO</div>
+        <div style="width:80px; text-align:center;">VISTO</div>
+        <div style="width:80px; text-align:center;">GUARDAR</div>
+        <div style="width:50px;"></div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    for tender in filtered_feed:
+        t_id = tender['CodigoExterno']
         
-        # Action Buttons
-        col1, col2, col3 = st.columns([1.2, 2, 7])
+        # Recuperar estado de DB o default
+        state = status_map.get(t_id, {'visto': False, 'guardado': False})
         
-        btn_label = "✅ Guardado" if is_saved else "🔖 Guardar"
-        if col1.button(btn_label, key=f"btn_{code}"):
-            toggle_save_tender(tender)
-            st.rerun()
+        # Marcar como Visto AUTOMÁTICAMENTE al renderizar (Si no estaba visto)
+        if not state['visto'] and not is_saved_view_only:
+            update_status(t_id, 'visto', True)
+            state['visto'] = True # Actualizar local para visualización actual
+
+        # Preparar datos visuales
+        org = tender.get('Comprador', {}).get('NombreOrganismo', 'N/A')
+        cats = categorize(str(tender.get('Nombre')) + str(tender.get('Descripcion')))
+        cats_html = "".join([f"<span class='tag-cat'>{c}</span>" for c in cats])
+        
+        # Iconos Estado
+        icon_visto = "👁️" if state['visto'] else "⚪"
+        icon_guardado = "⭐" if state['guardado'] else "☆"
+        btn_type = "primary" if state['guardado'] else "secondary"
+
+        # --- ROW LAYOUT ---
+        # Usamos columnas de Streamlit para alinear perfectamente los botones interactivos
+        c1, c2, c3, c4, c5, c6 = st.columns([1.5, 4, 2, 1, 1, 0.5])
+        
+        with c1:
+            st.markdown(f"<span style='font-family:monospace; font-size:0.8rem; color:#2563EB'>{t_id}</span>", unsafe_allow_html=True)
             
-        col2.link_button("🌐 Ir a MP", f"http://www.mercadopublico.cl/fichaLicitacion.html?idLicitacion={code}")
-        
-        # Detail Expander with OCDS Logic
-        with st.expander("🔎 Ver Items y Detalle Técnico"):
-            with st.spinner("Consultando OCDS y Catálogo..."):
-                ocds = fetch_ocds_data(code)
+        with c2:
+            st.markdown(f"<div style='font-weight:600; font-size:0.95rem; line-height:1.2'>{tender.get('Nombre')}</div>", unsafe_allow_html=True)
+            if cats_html: st.markdown(f"<div>{cats_html}</div>", unsafe_allow_html=True)
+            
+        with c3:
+            st.markdown(f"<div style='font-size:0.8rem; color:#4B5563; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;'>{org}</div>", unsafe_allow_html=True)
+            
+        with c4:
+            # Indicador Visual de Visto (No interactivo, solo informativo)
+            st.markdown(f"<div style='text-align:center; cursor:default;' title='Visto'>{icon_visto}</div>", unsafe_allow_html=True)
+            
+        with c5:
+            # Botón Guardar (Toggle)
+            if st.button(icon_guardado, key=f"btn_save_{t_id}_{is_saved_view_only}", help="Guardar/Desguardar"):
+                new_val = not state['guardado']
+                update_status(t_id, 'guardado', new_val)
+                st.rerun()
+
+        with c6:
+             st.link_button("🔗", f"http://www.mercadopublico.cl/fichaLicitacion.html?idLicitacion={t_id}", help="Ir a ficha")
+
+        # Expander para detalles técnicos (OCDS)
+        with st.expander("    Ver detalle técnico", expanded=False):
+            with st.spinner("Cargando items..."):
+                ocds = fetch_ocds_rich_data(t_id)
                 if ocds:
                     try:
                         items = ocds['records'][0]['compiledRelease']['tender']['items']
-                        clean_items = []
-                        
+                        data_items = []
                         for it in items:
                             base_desc = it.get('description', '')
-                            classif = it.get('classification', {})
-                            unspsc = classif.get('id', '')
-                            uri = classif.get('uri', '')
-                            
-                            # Deep Fetch for Real Product Name
-                            real_name = base_desc
+                            # Deep Fetch logic
+                            uri = it.get('classification', {}).get('uri')
+                            code_prod = it.get('classification', {}).get('id')
                             if uri:
-                                fetched_name = fetch_product_category_name(uri, unspsc)
-                                if fetched_name:
-                                    real_name = f"{fetched_name} ({base_desc})"
-                                    
-                            clean_items.append({
-                                "Código UNSPSC": unspsc,
-                                "Producto/Servicio": real_name,
-                                "Cantidad": it.get('quantity', 0),
-                                "Unidad": it.get('unit', {}).get('name', '')
-                            })
+                                real_name = fetch_product_category_name(uri, code_prod)
+                                if real_name: base_desc = f"({real_name}) {base_desc}"
                             
-                        st.dataframe(pd.DataFrame(clean_items), use_container_width=True, hide_index=True)
+                            data_items.append({
+                                "Código": code_prod,
+                                "Descripción": base_desc,
+                                "Cant": it.get('quantity')
+                            })
+                        st.dataframe(pd.DataFrame(data_items), hide_index=True, use_container_width=True)
                     except:
-                        st.warning("Datos OCDS disponibles pero sin items estructurados.")
-                else:
-                    st.error("Licitación antigua o sin datos abiertos (OCDS) disponibles.")
+                        st.warning("Sin items desglosados.")
 
-# --- TAB 2: MARCADORES ---
-with tab2:
-    if not st.session_state.saved_tenders:
-        st.info("No has guardado licitaciones aún.")
-    else:
-        st.success(f"Tienes {len(st.session_state.saved_tenders)} licitaciones guardadas.")
-        
-        df_saved = pd.DataFrame(st.session_state.saved_tenders)
-        # Simple export button
-        csv = df_saved.to_csv(index=False).encode('utf-8')
-        st.download_button("📥 Descargar Excel/CSV", data=csv, file_name="licitaciones_guardadas.csv", mime="text/csv")
-        
-        for t in st.session_state.saved_tenders:
-            # Simple card for saved items
-            code_saved = t['CodigoExterno']
-            st.markdown(f"""
-            <div style="padding:16px; background:white; border:1px solid #E5E7EB; border-radius:8px; margin-bottom:10px;">
-                <div style="font-weight:bold; color:#111827;">{t.get('Nombre')}</div>
-                <div style="font-size:0.8rem; color:#6B7280; font-family:monospace;">{code_saved}</div>
-            </div>
-            """, unsafe_allow_html=True)
-            
-            if st.button("🗑️ Eliminar", key=f"del_{code_saved}"):
-                toggle_save_tender(t)
-                st.rerun()
+# Renderizar Vistas
+with tab_all:
+    render_list(is_saved_view_only=False)
 
-
+with tab_saved:
+    render_list(is_saved_view_only=True)
