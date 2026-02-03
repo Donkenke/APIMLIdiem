@@ -1,18 +1,17 @@
-import sys
-import subprocess
-
-# --- FORCE INSTALL DEPENDENCY ---
-try:
-    import bs4
-except ImportError:
-    subprocess.check_call([sys.executable, "-m", "pip", "install", "beautifulsoup4"])
-
 import streamlit as st
 import requests
 import urllib3
 import pandas as pd
-from bs4 import BeautifulSoup
 from datetime import datetime, timedelta
+
+# --- SAFE IMPORT (Anti-Crash) ---
+try:
+    from bs4 import BeautifulSoup
+    HAS_BS4 = True
+except ImportError:
+    HAS_BS4 = False
+    print("⚠️ BeautifulSoup is missing. Scraper features disabled.")
+# --------------------------------
 
 # --- CONFIGURATION ---
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
@@ -106,6 +105,14 @@ def scrape_tender_details(code):
     Scrapes the 'Global Data' (Sections 5, 6, 7, 8) from the public detail page.
     Replicates the logic of finding 'Requisitos', 'Criterios', 'Garantias'.
     """
+    if not HAS_BS4:
+        return {
+            "MontoEstimado": "Error de Dependencia",
+            "Duracion": "--",
+            "Requisitos": "Falta librería beautifulsoup4 en requirements.txt",
+            "Criterios": [],
+            "Garantias": []
+        }
     url = f"http://www.mercadopublico.cl/Procurement/Modules/RFB/DetailsAcquisition.aspx?idlicitacion={code}"
     
     try:
