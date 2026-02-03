@@ -331,4 +331,4 @@ with tab_saved:
         st.info("No hay licitaciones guardadas.")
     
     for t in saved_tenders:
-        render_table_row(t, is_saved_view=True)True)
+        render_table_row(t, is_saved_view=True)
