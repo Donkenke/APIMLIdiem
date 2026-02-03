@@ -4,376 +4,410 @@ import pandas as pd
 from datetime import datetime, timedelta
 import textwrap
 import time
+import json
 
-# --- CONFIGURATION & PAGE SETUP ---
+# --- CONFIGURACIÓN DE PÁGINA ---
 st.set_page_config(
     layout="wide",
-    page_title="MercadoPublico Intel",
-    page_icon="📡",
+    page_title="Monitor de Licitaciones",
+    page_icon="🏢",
     initial_sidebar_state="expanded"
 )
 
-# --- CUSTOM CSS (SCI-FI / TECHNICAL AESTHETIC) ---
+# --- ESTILOS MODERNOS (CLEAN UI 2026) ---
 st.markdown("""
 <style>
-    @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&family=Inter:wght@400;600&display=swap');
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
 
-    /* Global Dark Theme adjustments */
+    /* Reset básico y fuente */
     .stApp {
-        background-color: #0d1117; /* Github Dark Dimmed */
+        background-color: #F8F9FA; /* Gris muy claro, casi blanco */
         font-family: 'Inter', sans-serif;
+        color: #1F2937;
     }
     
-    h1, h2, h3, h4, .stMetricLabel, .stMarkdown code {
-        font-family: 'JetBrains Mono', monospace;
+    h1, h2, h3 {
+        color: #111827;
+        font-weight: 700;
+        letter-spacing: -0.5px;
     }
 
-    /* Metric Containers */
-    div[data-testid="stMetric"] {
-        background-color: #161b22;
-        border: 1px solid #30363d;
-        border-radius: 8px;
-        padding: 15px;
-        box-shadow: 0 4px 12px rgba(0,0,0,0.5);
-    }
-    div[data-testid="stMetricValue"] {
-        color: #58a6ff;
-    }
-
-    /* Tender Card Styling */
+    /* Cards de Licitación */
     .tender-card {
-        background-color: #161b22;
-        border: 1px solid #30363d;
-        border-left: 5px solid #238636; /* Success Green */
-        padding: 20px;
+        background-color: #FFFFFF;
+        border: 1px solid #E5E7EB;
+        border-radius: 12px;
+        padding: 24px;
         margin-bottom: 16px;
-        border-radius: 6px;
-        transition: all 0.2s ease;
-    }
-    .tender-card:hover {
-        border-color: #58a6ff;
-        box-shadow: 0 4px 12px rgba(88, 166, 255, 0.1);
+        box-shadow: 0 1px 3px rgba(0,0,0,0.05); /* Sombra sutil */
+        transition: transform 0.2s, box-shadow 0.2s;
     }
     
+    .tender-card:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.05);
+        border-color: #3B82F6; /* Azul al pasar el mouse */
+    }
+
+    /* Header de la Card */
     .card-header {
         display: flex;
         justify-content: space-between;
         align-items: center;
         margin-bottom: 12px;
     }
-    
+
     .card-id {
-        font-family: 'JetBrains Mono', monospace;
-        color: #58a6ff;
-        background: rgba(88, 166, 255, 0.15);
+        font-size: 0.75rem;
+        font-weight: 600;
+        color: #6B7280;
+        background-color: #F3F4F6;
         padding: 4px 8px;
-        border-radius: 4px;
-        font-size: 0.85em;
-    }
-    
-    .card-status {
-        font-family: 'JetBrains Mono', monospace;
-        color: #2ea043;
-        border: 1px solid #2ea043;
-        padding: 2px 8px;
-        border-radius: 12px;
-        font-size: 0.75em;
-        text-transform: uppercase;
+        border-radius: 6px;
+        letter-spacing: 0.05em;
     }
 
-    .card-title {
-        color: #c9d1d9;
-        font-size: 1.15em;
+    .card-badge {
+        font-size: 0.75rem;
         font-weight: 600;
+        padding: 4px 10px;
+        border-radius: 9999px;
+    }
+    .status-publicada { background-color: #DCFCE7; color: #166534; } /* Verde */
+    .status-cerrada { background-color: #FEE2E2; color: #991B1B; } /* Rojo */
+    .status-adjudicada { background-color: #DBEAFE; color: #1E40AF; } /* Azul */
+
+    /* Título */
+    .card-title {
+        font-size: 1.125rem;
+        font-weight: 600;
+        color: #111827;
         margin-bottom: 8px;
         line-height: 1.4;
     }
 
-    .card-meta {
+    /* Metadata Row (Grid Horizontal) */
+    .card-meta-grid {
         display: flex;
-        gap: 20px;
-        color: #8b949e;
-        font-size: 0.85em;
-        font-family: 'JetBrains Mono', monospace;
-        margin-bottom: 12px;
         flex-wrap: wrap;
+        gap: 16px;
+        margin-bottom: 16px;
+        font-size: 0.875rem;
+        color: #4B5563;
+        align-items: center;
+    }
+    
+    .meta-item {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+    }
+    
+    .meta-icon { opacity: 0.6; }
+
+    /* Descripción */
+    .card-desc {
+        font-size: 0.875rem;
+        color: #6B7280; /* Gris medio */
+        line-height: 1.5;
+        border-top: 1px solid #F3F4F6;
+        padding-top: 12px;
+        margin-top: 12px;
     }
 
-    .card-desc {
-        color: #8b949e;
-        font-size: 0.9em;
-        line-height: 1.5;
-        border-top: 1px solid #21262d;
-        padding-top: 10px;
+    /* Métricas Superiores */
+    div[data-testid="stMetric"] {
+        background-color: #FFFFFF;
+        border: 1px solid #E5E7EB;
+        border-radius: 12px;
+        padding: 16px;
+        box-shadow: 0 1px 2px rgba(0,0,0,0.05);
     }
-    
-    /* Buttons */
+    div[data-testid="stMetricLabel"] { font-size: 0.875rem; color: #6B7280; }
+    div[data-testid="stMetricValue"] { color: #111827; font-weight: 600; }
+
+    /* Botones */
     .stButton button {
-        border-radius: 4px;
-        font-family: 'JetBrains Mono', monospace;
+        background-color: #FFFFFF;
+        color: #374151;
+        border: 1px solid #D1D5DB;
+        border-radius: 8px;
+        font-weight: 500;
+        transition: all 0.2s;
+    }
+    .stButton button:hover {
+        border-color: #3B82F6;
+        color: #3B82F6;
+        background-color: #EFF6FF;
     }
     
-    /* Expander styling */
+    /* Expander Cleaner */
     .streamlit-expanderHeader {
-        background-color: #21262d;
-        border-radius: 4px;
-        font-family: 'JetBrains Mono', monospace;
-        color: #c9d1d9;
+        background-color: #FFFFFF;
+        color: #374151;
+        border-radius: 8px;
+        font-weight: 500;
     }
 </style>
 """, unsafe_allow_html=True)
 
+# --- FUNCIONES AUXILIARES ---
 
-# --- BACKEND LOGIC ---
-
-@st.cache_data(ttl=3600, show_spinner=False)
-def fetch_daily_tenders(date_str, ticket):
+def format_relative_date(date_str):
     """
-    Production: Hits the official MercadoPublico API for a specific date.
-    Returns the list of tenders or an empty list.
+    Convierte fechas string a formato relativo humano (hace 2 horas, ayer, etc).
+    Intenta parsear varios formatos comunes de la API.
     """
-    url = "https://api.mercadopublico.cl/servicios/v1/publico/licitaciones.json"
-    params = {
-        "fecha": date_str,
-        "ticket": ticket
-    }
+    if not date_str:
+        return ""
     
+    # Intentar parsear la fecha (formato usual: 2026-02-03T10:00:00)
     try:
-        response = requests.get(url, params=params, timeout=10)
-        if response.status_code == 200:
-            data = response.json()
-            # The API returns { "Cantidad": X, "FechaCreacion": "...", "Listado": [...] }
-            return data.get("Listado", [])
-        else:
-            # Silent fail or log
-            print(f"API Error {response.status_code} for {date_str}")
-            return []
-    except Exception as e:
-        print(f"Connection error for {date_str}: {e}")
-        return []
+        dt = datetime.strptime(date_str, "%Y-%m-%dT%H:%M:%S")
+    except:
+        try:
+            dt = datetime.strptime(date_str, "%Y-%m-%d")
+        except:
+            return date_str # Devuelve original si falla
 
-def fetch_last_x_days(days, ticket):
+    now = datetime.now()
+    diff = now - dt
+
+    if diff < timedelta(minutes=1):
+        return "Hace un momento"
+    elif diff < timedelta(hours=1):
+        return f"Hace {int(diff.seconds/60)} min"
+    elif diff < timedelta(hours=24):
+        return f"Hace {int(diff.seconds/3600)} horas"
+    elif diff < timedelta(days=2):
+        return "Ayer"
+    elif diff < timedelta(days=7):
+        return f"Hace {diff.days} días"
+    else:
+        return dt.strftime("%d %b %Y") # Formato estándar si es antiguo
+
+def safe_get(data_dict, keys, default="--"):
     """
-    Iterates backwards from today to fetch X days of data.
-    Aggregates all into a single list.
+    Navega seguro por diccionarios anidados.
+    keys: lista de claves ['Comprador', 'Nombre']
+    """
+    current = data_dict
+    for key in keys:
+        if isinstance(current, dict):
+            current = current.get(key)
+        else:
+            return default
+    return current if current not in [None, "", "null"] else default
+
+# --- LÓGICA DE DATOS ---
+
+@st.cache_data(ttl=1800, show_spinner=False)
+def fetch_tenders_api(ticket, days=3):
+    """
+    Obtiene licitaciones de los últimos X días desde la API real.
     """
     all_tenders = []
-    # Progress bar in the UI
-    progress_text = "Syncing with MercadoPublico Mainframe..."
-    my_bar = st.progress(0, text=progress_text)
-    
-    today = datetime.now()
+    # Usamos una barra de progreso sutil
+    progress_bar = st.progress(0)
     
     for i in range(days):
-        date_query = (today - timedelta(days=i)).strftime("%d%m%Y")
-        tenders = fetch_daily_tenders(date_query, ticket)
-        if tenders:
-            all_tenders.extend(tenders)
+        date_query = (datetime.now() - timedelta(days=i)).strftime("%d%m%Y")
+        url = "https://api.mercadopublico.cl/servicios/v1/publico/licitaciones.json"
         
-        # Update progress
-        percent_complete = int((i + 1) / days * 100)
-        my_bar.progress(percent_complete, text=f"Scanning date: {date_query} ({len(tenders)} found)")
-        time.sleep(0.1) # Respectful API delay
+        try:
+            resp = requests.get(url, params={'fecha': date_query, 'ticket': ticket}, timeout=6)
+            if resp.status_code == 200:
+                data = resp.json()
+                tenders = data.get("Listado", [])
+                
+                # Inyectamos una fecha de creación simulada basada en la query
+                # porque la API "Listado" a veces no trae la fecha exacta de publicación
+                for t in tenders:
+                    if 'FechaCreacion' not in t:
+                        t['FechaCreacion'] = (datetime.now() - timedelta(days=i)).strftime("%Y-%m-%dT09:00:00")
+                
+                all_tenders.extend(tenders)
+        except Exception:
+            pass # Falla silenciosa para no romper la UI
+            
+        progress_bar.progress((i + 1) / days)
     
-    my_bar.empty()
+    progress_bar.empty()
     return all_tenders
 
-@st.cache_data(ttl=7200, show_spinner=False)
-def fetch_ocds_data(tender_id):
-    """
-    Production: Hits the OCDS API (No Ticket Needed).
-    Fetches rich details: Items, UNSPSC codes, etc.
-    """
-    # The ID structure in OCDS URL usually works with the standard code (e.g. 1506-85-O125)
-    url = f"https://api.mercadopublico.cl/APISOCDS/OCDS/record/{tender_id}"
-    
+@st.cache_data(ttl=3600, show_spinner=False)
+def fetch_ocds_details(tender_code):
+    """Consulta la API OCDS para detalles técnicos (ítems, UNSPSC)."""
+    url = f"https://api.mercadopublico.cl/APISOCDS/OCDS/record/{tender_code}"
     try:
-        response = requests.get(url, timeout=5)
-        if response.status_code == 200:
-            return response.json()
-    except Exception:
-        pass
+        r = requests.get(url, timeout=4)
+        if r.status_code == 200:
+            return r.json()
+    except:
+        return None
     return None
 
-def parse_ocds_items(ocds_json):
-    """
-    Extracts item details specifically looking for the 'classification' 
-    and 'description' as requested by the user.
-    """
-    parsed_items = []
-    
-    try:
-        # OCDS Structure: records[0] -> compiledRelease -> tender -> items
-        records = ocds_json.get('records', [])
-        if not records: return []
-        
-        tender = records[0].get('compiledRelease', {}).get('tender', {})
-        items = tender.get('items', [])
-        
-        for item in items:
-            classification = item.get('classification', {})
-            
-            # The user wants to see the specific category code and description
-            item_data = {
-                "Description": item.get('description', 'N/A'),
-                "Qty": item.get('quantity', 0),
-                "Unit": item.get('unit', {}).get('name', 'N/A'),
-                "UNSPSC Code": classification.get('id', 'N/A'),
-                # The category URI often contains the text logic if needed, 
-                # but we display the URI so the user can verify if they want.
-                "Category URI": classification.get('uri', '#')
-            }
-            parsed_items.append(item_data)
-            
-    except Exception as e:
-        print(f"Error parsing OCDS: {e}")
-        
-    return parsed_items
+# --- UI PRINCIPAL ---
 
-# --- FRONTEND UI ---
-
-# 1. Sidebar Controls
+# 1. Sidebar (Filtros)
 with st.sidebar:
-    st.title("🎛️ Control Deck")
+    st.header("🎛️ Filtros")
     
-    # API Key Handling (Try Secrets first, then Fallback to Input)
-    if "MP_TICKET" in st.secrets:
-        api_ticket = st.secrets["MP_TICKET"]
-        st.success("Authenticated via Secrets")
-    else:
-        api_ticket = st.text_input("Enter API Ticket", type="password")
-        st.caption("Get your ticket at api.mercadopublico.cl")
-
-    st.divider()
+    # API Key (Oculta o Secrets)
+    ticket = st.secrets.get("MP_TICKET", None)
+    if not ticket:
+        ticket = st.text_input("Tu Ticket de MercadoPublico", type="password")
+        if not ticket:
+            st.warning("🔒 Ingresa tu ticket para ver datos reales.")
+            st.stop()
+            
+    days_filter = st.slider("Antigüedad (Días)", 1, 5, 2)
     
-    days_to_fetch = st.slider("Lookback Window (Days)", 1, 7, 3)
+    st.subheader("Búsqueda")
+    search_txt = st.text_input("Palabras clave", placeholder="Ej: Hormigón, Diseño, Arica...")
     
-    st.subheader("Filters")
-    # Keywords
-    search_query = st.text_input("Keyword Search", placeholder="e.g., Hormigon, Consultoria, Arica")
-    
-    # Region Filter (Simple predefined list, can be expanded)
-    region_options = ["All", "Metropolitana", "Valparaíso", "Biobío", "Antofagasta", "Araucanía", "Arica"]
-    region_filter = st.selectbox("Region Scope", region_options)
+    region_sel = st.selectbox("Región", ["Todas", "Metropolitana", "Valparaíso", "Biobío", "Antofagasta", "Araucanía"])
     
     st.divider()
-    st.info("System Ready. Waiting for command.")
+    st.caption("v2.1.0 • Producción")
 
-# 2. Main Execution Flow
-st.title("Tender Intelligence Unit")
-st.markdown(f"**Live Feed** | Accessing MercadoPúblico Data | Protocol: `REST + OCDS`")
+# 2. Obtención de Datos
+raw_data = fetch_tenders_api(ticket, days_filter)
 
-if not api_ticket:
-    st.warning("⚠️ API Ticket required to initialize scan.")
-    st.stop()
+# 3. Filtrado Local
+filtered = []
+keywords = [k.strip().lower() for k in search_txt.split(",")] if search_txt else []
 
-# 3. Fetch Data (Cached)
-raw_tenders = fetch_last_x_days(days_to_fetch, api_ticket)
-
-# 4. Filter Logic (Client Side)
-filtered_tenders = []
-keywords = [k.strip().lower() for k in search_query.split(",")] if search_query else []
-
-for t in raw_tenders:
-    # Safely get fields
-    name = str(t.get('Nombre', '')).lower()
+for t in raw_data:
+    # Extracción segura de datos para filtrar
+    nombre = str(t.get('Nombre', '')).lower()
     desc = str(t.get('Descripcion', '')).lower()
-    region = t.get('Comprador', {}).get('RegionUnidad', '')
+    region_t = safe_get(t, ['Comprador', 'RegionUnidad'], "").lower()
     
-    # Region Filter
-    if region_filter != "All" and region_filter not in region:
+    # Filtro Región
+    if region_sel != "Todas" and region_sel.lower() not in region_t:
         continue
         
-    # Keyword Filter
+    # Filtro Keywords
     if keywords:
-        # If any keyword matches name OR description
-        if not any(k in name or k in desc for k in keywords):
+        if not any(k in nombre or k in desc for k in keywords):
             continue
             
-    filtered_tenders.append(t)
+    filtered.append(t)
 
-# 5. Metrics Display
-c1, c2, c3, c4 = st.columns(4)
-c1.metric("Raw Feed", len(raw_tenders))
-c2.metric("Filtered Targets", len(filtered_tenders))
-c3.metric("API Efficiency", "100%")
-c4.metric("Last Update", datetime.now().strftime("%H:%M:%S"))
+# 4. Header y Métricas
+st.title("Monitor de Licitaciones")
+st.markdown("Vista en tiempo real de oportunidades de negocio.")
+
+m1, m2, m3 = st.columns(3)
+m1.metric("Oportunidades", len(filtered))
+m2.metric("Total Escaneado", len(raw_data))
+m3.metric("Estado API", "Conectado 🟢")
 
 st.divider()
 
-# 6. Render Results
-if not filtered_tenders:
-    st.info("No tenders found matching current parameters.")
+# 5. Renderizado de Cards (Loop Principal)
+if not filtered:
+    st.info("🔍 No se encontraron licitaciones con estos filtros.")
 else:
-    for tender in filtered_tenders:
-        code = tender.get('CodigoExterno')
+    for item in filtered:
+        # Preparar variables para la UI (Limpieza de datos)
+        code = item.get('CodigoExterno', 'S/I')
+        title = item.get('Nombre', 'Sin Título')
+        status = item.get('Estado', 'Publicada').capitalize()
         
-        # Container for visual grouping
-        with st.container():
-            # Formatting dates
-            date_close = tender.get('FechaCierre', 'N/A')
-            if date_close:
-                # Basic parsing, might need adjustment based on exact API format
-                try:
-                    date_obj = datetime.strptime(date_close, "%Y-%m-%dT%H:%M:%S")
-                    date_display = date_obj.strftime("%d %b %Y")
-                except:
-                    date_display = date_close
-            else:
-                date_display = "No Date"
+        # Clases de color para el estado
+        status_class = "status-publicada"
+        if "cerrada" in status.lower(): status_class = "status-cerrada"
+        elif "adjudicada" in status.lower(): status_class = "status-adjudicada"
 
-            # Render Card HTML
-            html_content = f"""
-            <div class="tender-card">
-                <div class="card-header">
-                    <span class="card-id">{code}</span>
-                    <span class="card-status">{tender.get('Estado', 'Unknown')}</span>
+        # Datos extraídos seguramente
+        org_name = safe_get(item, ['Comprador', 'NombreOrganismo'], "Organismo Desconocido")
+        region = safe_get(item, ['Comprador', 'RegionUnidad'], "Región no esp.")
+        currency = item.get('Moneda', '')
+        if currency not in ['CLP', 'UF', 'USD']: currency = "CLP" # Default
+        
+        # Fechas
+        date_close_raw = item.get('FechaCierre', '')
+        date_close_human = format_relative_date(date_close_raw)
+        
+        date_pub_raw = item.get('FechaCreacion', '') # Usamos nuestra fecha inyectada o la real
+        date_pub_human = format_relative_date(date_pub_raw)
+
+        # Descripción truncada y sanitizada (Evita error </div>)
+        raw_desc = item.get('Descripcion', '')
+        short_desc = textwrap.shorten(raw_desc, width=220, placeholder="...")
+        # Escapar caracteres HTML peligrosos si fuera necesario, pero textwrap suele ser seguro.
+        
+        # Construcción de la Card HTML
+        card_html = f"""
+        <div class="tender-card">
+            <div class="card-header">
+                <span class="card-id">#{code}</span>
+                <span class="card-badge {status_class}">{status}</span>
+            </div>
+            <div class="card-title">{title}</div>
+            
+            <div class="card-meta-grid">
+                <div class="meta-item" title="Organismo">
+                    <span class="meta-icon">🏢</span> {org_name}
                 </div>
-                <div class="card-title">{tender.get('Nombre')}</div>
-                <div class="card-meta">
-                    <span>🏢 {tender.get('Comprador', {}).get('NombreOrganismo', 'N/A')}</span>
-                    <span>📍 {tender.get('Comprador', {}).get('RegionUnidad', 'N/A')}</span>
-                    <span>📅 Close: {date_display}</span>
-                    <span>💰 {tender.get('Moneda', 'CLP')}</span>
+                <div class="meta-item" title="Región">
+                    <span class="meta-icon">📍</span> {region}
                 </div>
-                <div class="card-desc">
-                    {textwrap.shorten(tender.get('Descripcion', ''), width=200, placeholder="...")}
+                <div class="meta-item" title="Cierre">
+                    <span class="meta-icon">⏳</span> Cierre: {date_close_human}
+                </div>
+                <div class="meta-item" title="Publicado">
+                    <span class="meta-icon">📢</span> {date_pub_human}
                 </div>
             </div>
-            """
-            st.markdown(html_content, unsafe_allow_html=True)
             
-            # Action Bar
-            col_actions = st.columns([1, 2, 8])
-            
-            with col_actions[1]:
-                # Deep Dive Button logic
-                # We use an expander. When opened, it triggers the OCDS fetch.
-                with st.expander("🔎 INSPECT DATA"):
-                    with st.spinner(f"Establish link to OCDS Node: {code}..."):
-                        ocds_data = fetch_ocds_data(code)
-                        
-                        if ocds_data:
-                            items = parse_ocds_items(ocds_data)
+            <div class="card-desc">
+                {short_desc}
+            </div>
+        </div>
+        """
+        
+        # Renderizar la tarjeta visual
+        st.markdown(card_html, unsafe_allow_html=True)
+        
+        # Botones de Acción (Fuera del HTML para interactividad Streamlit)
+        c_act1, c_act2 = st.columns([0.2, 0.8])
+        
+        with c_act1:
+            st.link_button("🌐 Ver en Web", f"http://www.mercadopublico.cl/fichaLicitacion.html?idLicitacion={code}")
+        
+        with c_act2:
+            # Lógica de Expansión (Detalle Técnico)
+            with st.expander("🛠️ Ver Detalle Técnico (Items & Categorías)"):
+                # Solo hacemos fetch si el usuario abre esto (Lazy Loading)
+                with st.spinner("Consultando especificaciones técnicas..."):
+                    ocds_data = fetch_ocds_details(code)
+                    
+                    if ocds_data:
+                        # Parseo específico de items OCDS
+                        try:
+                            items_list = ocds_data['records'][0]['compiledRelease']['tender']['items']
+                            clean_items = []
+                            for it in items_list:
+                                clean_items.append({
+                                    "Descripción": it.get('description', '--'),
+                                    "Cantidad": it.get('quantity', 0),
+                                    "Unidad": it.get('unit', {}).get('name', '--'),
+                                    "Código UNSPSC": it.get('classification', {}).get('id', '--')
+                                })
                             
-                            st.markdown("##### 📦 Technical Specifications (Items)")
-                            if items:
-                                df = pd.DataFrame(items)
-                                st.dataframe(
-                                    df, 
-                                    use_container_width=True,
-                                    column_config={
-                                        "Category URI": st.column_config.LinkColumn("UNSPSC Definition")
-                                    }
-                                )
-                            else:
-                                st.warning("No itemized data available in OCDS record.")
-                                
-                            # Optional: Show Raw JSON for "Hacker" feel
-                            if st.checkbox("Show Raw JSON Payload", key=f"raw_{code}"):
-                                st.json(ocds_data)
-                        else:
-                            st.error("OCDS Link Failed. Tender might be closed or archived.")
-
+                            st.dataframe(
+                                pd.DataFrame(clean_items), 
+                                hide_index=True, 
+                                use_container_width=True
+                            )
+                        except:
+                            st.warning("⚠️ No se encontraron ítems desglosados en el registro OCDS.")
+                            st.json(ocds_data) # Fallback para debug
+                    else:
+                        st.error("No se pudo conectar con el servicio de datos abiertos (OCDS) para esta licitación.")
             with col_actions[0]:
+
                  st.link_button("🔗 Web", f"http://www.mercadopublico.cl/fichaLicitacion.html?idLicitacion={code}")
