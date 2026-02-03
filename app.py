@@ -414,137 +414,185 @@ with st.sidebar:
     st.download_button("📥 Descargar Guardados (CSV)", df_db.to_csv(index=False), "guardados.csv")
 
 st.markdown("<div class='main-container'>", unsafe_allow_html=True)
-st.title("🏢 Monitor de Licitaciones")
 
-# Tabs
-tab_all, tab_saved = st.tabs(["Listado General", "Solo Guardados"])
-
-def render_list(is_saved_view_only=False):
-    # 1. Obtener Datos API
-    if is_saved_view_only:
-        # Modo "Solo Guardados": Usamos la DB como fuente principal
-        conn = sqlite3.connect(DB_FILE)
-        saved_ids = pd.read_sql_query("SELECT id FROM tender_status WHERE guardado = 1", conn)['id'].tolist()
-        conn.close()
-        
-        # Como la API pública no permite buscar por ID masivo fácilmente sin loop,
-        # aquí hacemos un fetch general (cacheado) y filtramos.
-        # *Nota: En producción real, deberías guardar el JSON completo en la DB para no depender de la API histórica.*
-        raw_feed = fetch_api_feed(ticket, 7) # Buscamos 7 días atrás para intentar encontrar los guardados
-        filtered_feed = [t for t in raw_feed if t['CodigoExterno'] in saved_ids]
-    else:
-        # Modo General
-        filtered_feed = fetch_api_feed(ticket, days)
-
-    # 2. Obtener Estados de DB (Batch)
-    current_ids = [t['CodigoExterno'] for t in filtered_feed]
-    status_map = get_status_dict(current_ids)
+# Mostrar vista detallada si hay una licitación seleccionada
+if st.session_state.selected_tender:
+    selected = st.session_state.selected_tender
     
-    # 3. Filtrar Texto (Frontend)
-    if search:
-        terms = [s.strip().lower() for s in search.split(",")]
-        filtered_feed = [t for t in filtered_feed if any(term in (str(t.get('Nombre'))+str(t.get('Descripcion'))).lower() for term in terms)]
-
-    # 4. Render Grid Headers
-    if not filtered_feed:
-        st.info("No hay datos para mostrar.")
-        return
-
-    # Header de columnas con alineación profesional
-    st.markdown("""
-    <div class="header-row">
-        <div class="header-id">ID</div>
-        <div class="header-name">LICITACIÓN</div>
-        <div class="header-org">ORGANISMO</div>
-        <div class="header-status">VISTO</div>
-        <div class="header-status">GUARDAR</div>
-        <div class="header-actions">ACCIONES</div>
-    </div>
-    """, unsafe_allow_html=True)
-
-    for tender in filtered_feed:
-        t_id = tender['CodigoExterno']
+    # Botón para volver al listado
+    if st.button("← Volver al listado"):
+        st.session_state.selected_tender = None
+        st.rerun()
+    
+    st.title(f"🏢 Detalle de Licitación: {selected['CodigoExterno']}")
+    
+    # Mostrar información detallada de la licitación
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        st.subheader("Información Principal")
+        st.write(f"**ID:** {selected['CodigoExterno']}")
+        st.write(f"**Nombre:** {selected['Nombre']}")
+        st.write(f"**Estado:** {selected['Estado']}")
+        st.write(f"**Tipo:** {selected['Tipo']}")
+        st.write(f"**Moneda:** {selected['Moneda']}")
         
-        # Recuperar estado de DB o default
-        state = status_map.get(t_id, {'visto': False, 'guardado': False})
+        # Mostrar categorías
+        cats = categorize(str(selected.get('Nombre')) + str(selected.get('Descripcion')))
+        if cats:
+            st.write("**Categorías detectadas:**")
+            for cat in cats:
+                st.write(f"- {cat}")
         
-        # Marcar como Visto AUTOMÁTICAMENTE al renderizar (Si no estaba visto)
-        if not state['visto'] and not is_saved_view_only:
-            update_status(t_id, 'visto', True)
-            state['visto'] = True # Actualizar local para visualización actual
+    with col2:
+        st.subheader("Información del Comprador")
+        comprador = selected.get('Comprador', {})
+        st.write(f"**Organismo:** {comprador.get('NombreOrganismo', 'N/A')}")
+        st.write(f"**Unidad:** {comprador.get('NombreUnidad', 'N/A')}")
+        st.write(f"**RUT Unidad:** {comprador.get('RutUnidad', 'N/A')}")
+        st.write(f"**Región:** {comprador.get('RegionUnidad', 'N/A')}")
+    
+    # Descripción
+    st.subheader("Descripción")
+    st.write(selected.get('Descripcion', 'No disponible'))
+    
+    # Timeline de fechas
+    st.subheader("Timeline de Fechas")
+    timeline_items = create_timeline_from_dates(selected)
+    if timeline_items:
+        for item in timeline_items:
+            st.write(f"**{item['date']}** - {item['event']}")
+    else:
+        st.write("No hay fechas disponibles para mostrar en el timeline.")
+    
+    # Detalles técnicos
+    with st.expander("Detalles Técnicos"):
+        t_id = selected['CodigoExterno']
+        with st.spinner("Cargando items técnicos..."):
+            ocds = fetch_ocds_rich_data(t_id)
+            if ocds:
+                try:
+                    items = ocds['records'][0]['compiledRelease']['tender']['items']
+                    data_items = []
+                    for it in items:
+                        base_desc = it.get('description', '')
+                        # Deep Fetch logic
+                        uri = it.get('classification', {}).get('uri')
+                        code_prod = it.get('classification', {}).get('id')
+                        if uri:
+                            real_name = fetch_product_category_name(uri, code_prod)
+                            if real_name: base_desc = f"({real_name}) {base_desc}"
+                        
+                        data_items.append({
+                            "Código": code_prod,
+                            "Descripción": base_desc,
+                            "Cant": it.get('quantity')
+                        })
+                    st.dataframe(pd.DataFrame(data_items), hide_index=True, use_container_width=True)
+                except Exception as e:
+                    st.warning(f"Error al cargar items técnicos: {e}")
+            else:
+                st.warning("No se pudieron cargar los datos técnicos.")
+else:
+    st.title("🏢 Monitor de Licitaciones")
 
-        # Preparar datos visuales
-        org = tender.get('Comprador', {}).get('NombreOrganismo', 'N/A')
-        cats = categorize(str(tender.get('Nombre')) + str(tender.get('Descripcion')))
-        cats_html = "".join([f"<span class='tag-cat'>{c}</span>" for c in cats])
+    # Tabs
+    tab_all, tab_saved = st.tabs(["Listado General", "Solo Guardados"])
+
+    def render_list(is_saved_view_only=False):
+        # 1. Obtener Datos API
+        if is_saved_view_only:
+            # Modo "Solo Guardados": Usamos la DB como fuente principal
+            conn = sqlite3.connect(DB_FILE)
+            saved_ids = pd.read_sql_query("SELECT id FROM tender_status WHERE guardado = 1", conn)['id'].tolist()
+            conn.close()
+            
+            # Como la API pública no permite buscar por ID masivo fácilmente sin loop,
+            # aquí hacemos un fetch general (cacheado) y filtramos.
+            # *Nota: En producción real, deberías guardar el JSON completo en la DB para no depender de la API histórica.*
+            raw_feed = fetch_api_feed(ticket, 7) # Buscamos 7 días atrás para intentar encontrar los guardados
+            filtered_feed = [t for t in raw_feed if t['CodigoExterno'] in saved_ids]
+        else:
+            # Modo General
+            filtered_feed = fetch_api_feed(ticket, days)
+
+        # 2. Obtener Estados de DB (Batch)
+        current_ids = [t['CodigoExterno'] for t in filtered_feed]
+        status_map = get_status_dict(current_ids)
         
-        # Iconos Estado
-        icon_visto = "👁️" if state['visto'] else "⚪"
-        icon_guardado = "⭐" if state['guardado'] else "☆"
-        btn_type = "primary" if state['guardado'] else "secondary"
+        # 3. Filtrar Texto (Frontend)
+        if search:
+            terms = [s.strip().lower() for s in search.split(",")]
+            filtered_feed = [t for t in filtered_feed if any(term in (str(t.get('Nombre'))+str(t.get('Descripcion'))).lower() for term in terms)]
 
-        # --- ROW LAYOUT ---
-        # Usamos columnas de Streamlit para alinear perfectamente los botones interactivos
-        c1, c2, c3, c4, c5, c6 = st.columns([1.5, 4, 2, 1, 1, 0.5])
-        
-        with c1:
-            st.markdown(f"<div class='col-id'>{t_id}</div>", unsafe_allow_html=True)
+        # 4. Render Grid Headers
+        if not filtered_feed:
+            st.info("No hay datos para mostrar.")
+            return
+
+        # Header de columnas con alineación profesional - sin "Visto"
+        st.markdown("""
+        <div class="header-row">
+            <div class="header-id">ID</div>
+            <div class="header-name">LICITACIÓN</div>
+            <div class="header-org">ORGANISMO</div>
+            <div class="header-status">GUARDAR</div>
+            <div class="header-actions">ACCIONES</div>
+        </div>
+        """, unsafe_allow_html=True)
+
+        for tender in filtered_feed:
+            t_id = tender['CodigoExterno']
             
-        with c2:
-            # Botón que actúa como fila de tabla - al hacer clic se selecciona la licitación
-            if st.button(tender.get('Nombre'), key=f"select_{t_id}_{is_saved_view_only}", help="Ver detalles", type="secondary", use_container_width=True):
-                st.session_state.selected_tender = tender
-                st.rerun()
-            if cats_html: st.markdown(f"<div>{cats_html}</div>", unsafe_allow_html=True)
+            # Recuperar estado de DB o default
+            state = status_map.get(t_id, {'visto': False, 'guardado': False})
             
-        with c3:
-            st.markdown(f"<div class='col-org'>{org}</div>", unsafe_allow_html=True)
+            # Marcar como Visto AUTOMÁTICAMENTE al renderizar (Si no estaba visto)
+            if not state['visto'] and not is_saved_view_only:
+                update_status(t_id, 'visto', True)
+                state['visto'] = True # Actualizar local para visualización actual
+
+            # Preparar datos visuales
+            org = tender.get('Comprador', {}).get('NombreOrganismo', 'N/A')
+            cats = categorize(str(tender.get('Nombre')) + str(tender.get('Descripcion')))
+            cats_html = "".join([f"<span class='tag-cat'>{c}</span>" for c in cats])
             
-        with c4:
-            # Indicador Visual de Visto (No interactivo, solo informativo)
-            st.markdown(f"<div class='status-indicator status-seen' title='Visto'>{icon_visto}</div>", unsafe_allow_html=True)
+            # Iconos Estado - solo guardar ahora
+            icon_guardado = "⭐" if state['guardado'] else "☆"
+            btn_type = "primary" if state['guardado'] else "secondary"
+
+            # --- ROW LAYOUT ---
+            # Usamos columnas de Streamlit para alinear perfectamente los botones interactivos
+            c1, c2, c3, c4, c5 = st.columns([1.5, 4, 2, 1, 0.5])
             
-        with c5:
-            # Botón Guardar (Toggle) con clase especial
-            if st.button(icon_guardado, key=f"btn_save_{t_id}_{is_saved_view_only}", help="Guardar/Desguardar", type="secondary"):
-                new_val = not state['guardado']
-                update_status(t_id, 'guardado', new_val)
-                st.rerun()
+            with c1:
+                st.markdown(f"<div class='col-id'>{t_id}</div>", unsafe_allow_html=True)
+                
+            with c2:
+                # Botón que actúa como fila de tabla - al hacer clic se selecciona la licitación
+                if st.button(tender.get('Nombre'), key=f"select_{t_id}_{is_saved_view_only}", help="Ver detalles", type="secondary", use_container_width=True):
+                    st.session_state.selected_tender = tender
+                    st.rerun()
+                if cats_html: st.markdown(f"<div>{cats_html}</div>", unsafe_allow_html=True)
+                
+            with c3:
+                st.markdown(f"<div class='col-org'>{org}</div>", unsafe_allow_html=True)
+                
+            with c4:
+                # Botón Guardar (Toggle) con clase especial
+                if st.button(icon_guardado, key=f"btn_save_{t_id}_{is_saved_view_only}", help="Guardar/Desguardar", type="secondary"):
+                    new_val = not state['guardado']
+                    update_status(t_id, 'guardado', new_val)
+                    st.rerun()
 
-        with c6:
-            st.link_button("🔗", f"http://www.mercadopublico.cl/fichaLicitacion.html?idLicitacion={t_id}", help="Ir a ficha", type="secondary")
+            with c5:
+                st.link_button("🔗", f"http://www.mercadopublico.cl/fichaLicitacion.html?idLicitacion={t_id}", help="Ir a ficha", type="secondary")
 
-        # Expander para detalles técnicos (OCDS)
-        with st.expander("    Ver detalle técnico", expanded=False):
-            with st.spinner("Cargando items..."):
-                ocds = fetch_ocds_rich_data(t_id)
-                if ocds:
-                    try:
-                        items = ocds['records'][0]['compiledRelease']['tender']['items']
-                        data_items = []
-                        for it in items:
-                            base_desc = it.get('description', '')
-                            # Deep Fetch logic
-                            uri = it.get('classification', {}).get('uri')
-                            code_prod = it.get('classification', {}).get('id')
-                            if uri:
-                                real_name = fetch_product_category_name(uri, code_prod)
-                                if real_name: base_desc = f"({real_name}) {base_desc}"
-                            
-                            data_items.append({
-                                "Código": code_prod,
-                                "Descripción": base_desc,
-                                "Cant": it.get('quantity')
-                            })
-                        st.dataframe(pd.DataFrame(data_items), hide_index=True, use_container_width=True)
-                    except:
-                        st.warning("Sin items desglosados.")
+    # Renderizar Vistas
+    with tab_all:
+        render_list(is_saved_view_only=False)
 
-# Renderizar Vistas
-with tab_all:
-    render_list(is_saved_view_only=False)
-
-with tab_saved:
-    render_list(is_saved_view_only=True)
+    with tab_saved:
+        render_list(is_saved_view_only=True)
 
 st.markdown("</div>", unsafe_allow_html=True)
