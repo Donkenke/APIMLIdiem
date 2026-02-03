@@ -9,185 +9,199 @@ import json
 # --- CONFIGURACIÓN DE PÁGINA ---
 st.set_page_config(
     layout="wide",
-    page_title="Monitor de Licitaciones",
+    page_title="MercadoPublico Intel",
     page_icon="🏢",
     initial_sidebar_state="expanded"
 )
 
-# --- ESTILOS MODERNOS (CLEAN UI 2026) ---
+# --- ESTADO DE LA SESIÓN (PERSISTENCIA) ---
+if 'saved_tenders' not in st.session_state:
+    st.session_state.saved_tenders = []
+
+# --- CONFIGURACIÓN DE CATEGORÍAS (Lógica IDIEM) ---
+CATEGORIES = {
+    "Laboratorio/Materiales": ["laboratorio", "ensayo", "hormigón", "probeta", "asfalto", "áridos", "cemento"],
+    "Geotecnia/Suelos": ["geotecnia", "suelo", "calicata", "sondaje", "mecánica de suelo", "estratigrafía"],
+    "Ingeniería/Estructuras": ["estructura", "cálculo", "diseño ingeniería", "sísmico", "patología", "puente", "viaducto"],
+    "Inspección Técnica (ITO)": ["ito", "inspección técnica", "supervisión", "fiscalización de obra", "hito"]
+}
+
+# --- ESTILOS CSS MODERNOS (CLEAN UI) ---
 st.markdown("""
 <style>
     @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
 
-    /* Reset básico y fuente */
-    .stApp {
-        background-color: #F8F9FA;
-        font-family: 'Inter', sans-serif;
-        color: #1F2937;
-    }
+    .stApp { background-color: #F9FAFB; font-family: 'Inter', sans-serif; color: #111827; }
     
-    h1, h2, h3 {
-        color: #111827;
-        font-weight: 700;
-        letter-spacing: -0.5px;
+    /* Tabs */
+    .stTabs [data-baseweb="tab-list"] { gap: 2px; }
+    .stTabs [data-baseweb="tab"] {
+        height: 50px;
+        white-space: pre-wrap;
+        background-color: #F3F4F6;
+        border-radius: 4px 4px 0px 0px;
+        gap: 1px;
+        padding-top: 10px;
+        padding-bottom: 10px;
+        color: #6B7280;
+    }
+    .stTabs [aria-selected="true"] {
+        background-color: #FFFFFF;
+        color: #2563EB;
+        border-top: 2px solid #2563EB;
     }
 
-    /* Cards de Licitación */
+    /* Cards */
     .tender-card {
         background-color: #FFFFFF;
         border: 1px solid #E5E7EB;
-        border-radius: 12px;
-        padding: 24px;
-        margin-bottom: 16px;
-        box-shadow: 0 1px 3px rgba(0,0,0,0.05);
-        transition: transform 0.2s, box-shadow 0.2s;
-    }
-    
-    .tender-card:hover {
-        transform: translateY(-2px);
-        box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.05);
-        border-color: #3B82F6;
-    }
-
-    /* Header de la Card */
-    .card-header {
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
+        border-radius: 8px;
+        padding: 20px;
         margin-bottom: 12px;
+        box-shadow: 0 1px 2px rgba(0,0,0,0.05);
+        transition: all 0.2s;
+    }
+    .tender-card:hover {
+        border-color: #93C5FD;
+        box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
     }
 
-    .card-id {
-        font-size: 0.75rem;
-        font-weight: 600;
-        color: #6B7280;
-        background-color: #F3F4F6;
-        padding: 4px 8px;
-        border-radius: 6px;
-        letter-spacing: 0.05em;
-    }
-
-    .card-badge {
-        font-size: 0.75rem;
-        font-weight: 600;
-        padding: 4px 10px;
-        border-radius: 9999px;
-    }
-    .status-publicada { background-color: #DCFCE7; color: #166534; }
-    .status-cerrada { background-color: #FEE2E2; color: #991B1B; }
-    .status-adjudicada { background-color: #DBEAFE; color: #1E40AF; }
-
-    /* Título */
-    .card-title {
-        font-size: 1.125rem;
-        font-weight: 600;
-        color: #111827;
-        margin-bottom: 8px;
-        line-height: 1.4;
-    }
-
-    /* Metadata Row */
-    .card-meta-grid {
-        display: flex;
-        flex-wrap: wrap;
-        gap: 16px;
-        margin-bottom: 16px;
-        font-size: 0.875rem;
-        color: #4B5563;
-        align-items: center;
-    }
+    /* Tipografía Card */
+    .card-top-row { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 8px; }
+    .card-id { font-family: monospace; font-size: 0.8rem; color: #6B7280; background: #F3F4F6; padding: 2px 6px; border-radius: 4px; }
+    .card-title { font-size: 1.05rem; font-weight: 600; color: #111827; margin-bottom: 4px; line-height: 1.4; }
     
-    .meta-item {
-        display: flex;
-        align-items: center;
-        gap: 6px;
-    }
-    
-    .meta-icon { opacity: 0.6; }
+    /* Metadata grid */
+    .meta-grid { display: flex; flex-wrap: wrap; gap: 15px; font-size: 0.85rem; color: #4B5563; margin-top: 8px; margin-bottom: 12px; }
+    .meta-item { display: flex; align-items: center; gap: 5px; }
+    .meta-icon { color: #9CA3AF; }
 
-    /* Descripción */
-    .card-desc {
-        font-size: 0.875rem;
-        color: #6B7280;
-        line-height: 1.5;
-        border-top: 1px solid #F3F4F6;
-        padding-top: 12px;
-        margin-top: 12px;
+    /* Tags Categorías */
+    .cat-tag { 
+        font-size: 0.75rem; 
+        padding: 2px 8px; 
+        border-radius: 12px; 
+        background-color: #EFF6FF; 
+        color: #1D4ED8; 
+        border: 1px solid #DBEAFE;
+        margin-right: 4px;
+        display: inline-block;
+    }
+
+    /* Botones y Badges */
+    div[data-testid="stMetricValue"] { font-size: 1.5rem; color: #111827; }
+    
+    .status-badge {
+        font-size: 0.7rem;
+        font-weight: 600;
+        padding: 2px 8px;
+        border-radius: 99px;
+        text-transform: uppercase;
     }
 </style>
 """, unsafe_allow_html=True)
 
-# --- FUNCIONES AUXILIARES ---
+# --- FUNCIONES DE SOPORTE ---
 
-def format_relative_date(date_str):
-    """Convierte fechas string a formato relativo humano."""
+def get_relative_time(date_str):
+    """Calcula 'Hace 10 minutos' basado en FechaCreacion"""
     if not date_str: return ""
     try:
+        # Intentar formato ISO completo
         dt = datetime.strptime(date_str, "%Y-%m-%dT%H:%M:%S")
     except:
         try:
+            # Fallback a fecha simple
             dt = datetime.strptime(date_str, "%Y-%m-%d")
         except:
-            return date_str
-
+            return "" # No mostrar si no se puede parsear
+            
     now = datetime.now()
     diff = now - dt
+    
+    if diff < timedelta(minutes=1): return "Hace un instante"
+    if diff < timedelta(hours=1): return f"Hace {int(diff.seconds/60)} min"
+    if diff < timedelta(hours=24): return f"Hace {int(diff.seconds/3600)} h"
+    if diff < timedelta(days=7): return f"Hace {diff.days} días"
+    return dt.strftime("%d/%m/%Y")
 
-    if diff < timedelta(minutes=1): return "Hace un momento"
-    elif diff < timedelta(hours=1): return f"Hace {int(diff.seconds/60)} min"
-    elif diff < timedelta(hours=24): return f"Hace {int(diff.seconds/3600)} horas"
-    elif diff < timedelta(days=2): return "Ayer"
-    elif diff < timedelta(days=7): return f"Hace {diff.days} días"
-    else: return dt.strftime("%d %b %Y")
+def categorize_tender(tender_obj):
+    """Asigna etiquetas basado en palabras clave (Lógica IDIEM)"""
+    text = (str(tender_obj.get('Nombre', '')) + " " + str(tender_obj.get('Descripcion', ''))).lower()
+    detected = []
+    for cat_name, keywords in CATEGORIES.items():
+        if any(k in text for k in keywords):
+            detected.append(cat_name)
+    return detected
 
-def safe_get(data_dict, keys, default="--"):
-    """Navega seguro por diccionarios anidados."""
-    current = data_dict
-    for key in keys:
-        if isinstance(current, dict):
-            current = current.get(key)
-        else:
-            return default
-    return current if current not in [None, "", "null"] else default
+def toggle_save(tender):
+    """Manejador para guardar/borrar de la sesión"""
+    # Check if already saved by ID
+    existing = next((x for x in st.session_state.saved_tenders if x['CodigoExterno'] == tender['CodigoExterno']), None)
+    if existing:
+        st.session_state.saved_tenders.remove(existing)
+        st.toast(f"Eliminado: {tender['CodigoExterno']}")
+    else:
+        st.session_state.saved_tenders.append(tender)
+        st.toast(f"Guardado: {tender['CodigoExterno']}")
 
-# --- LÓGICA DE DATOS ---
+# --- LÓGICA DE DATOS (API & OCDS) ---
+
+@st.cache_data(ttl=3600)
+def fetch_product_name_from_uri(uri, product_code):
+    """
+    Cadena de llamadas: URI -> JSON -> Match CodigoProducto -> Nombre Real
+    Ej: Obtiene '4.8 Obras Sanitarias. 2da'
+    """
+    if not uri or not product_code: return None
+    try:
+        r = requests.get(uri, timeout=3)
+        if r.status_code == 200:
+            data = r.json()
+            products = data.get('Productos', [])
+            # Buscar el match exacto del ID
+            for p in products:
+                # La API devuelve enteros a veces, aseguramos string
+                if str(p.get('CodigoProducto')) == str(product_code):
+                    return p.get('NombreProducto')
+    except:
+        return None
+    return None
 
 @st.cache_data(ttl=1800, show_spinner=False)
-def fetch_tenders_api(ticket, days=3):
-    """Obtiene licitaciones de la API real."""
+def fetch_main_feed(ticket, days=3):
     all_tenders = []
-    progress_bar = st.progress(0, text="Conectando con MercadoPublico...")
+    pbar = st.progress(0, text="Sincronizando MercadoPúblico...")
     
     for i in range(days):
-        date_query = (datetime.now() - timedelta(days=i)).strftime("%d%m%Y")
+        date_q = (datetime.now() - timedelta(days=i)).strftime("%d%m%Y")
         url = "https://api.mercadopublico.cl/servicios/v1/publico/licitaciones.json"
-        
         try:
-            resp = requests.get(url, params={'fecha': date_query, 'ticket': ticket}, timeout=6)
-            if resp.status_code == 200:
-                data = resp.json()
+            r = requests.get(url, params={'fecha': date_q, 'ticket': ticket}, timeout=8)
+            if r.status_code == 200:
+                data = r.json()
                 tenders = data.get("Listado", [])
                 
-                # Inyectar fecha aproximada si falta
-                for t in tenders:
-                    if 'FechaCreacion' not in t:
-                        t['FechaCreacion'] = (datetime.now() - timedelta(days=i)).strftime("%Y-%m-%dT09:00:00")
+                # Enriquecer con fecha de creación aproximada para la UI si falta
+                creation_fallback = (datetime.now() - timedelta(days=i)).strftime("%Y-%m-%dT09:00:00")
                 
+                for t in tenders:
+                    if 'FechaCreacion' not in t: t['FechaCreacion'] = creation_fallback
+                    
                 all_tenders.extend(tenders)
         except Exception:
-            pass 
-            
-        progress_bar.progress((i + 1) / days)
+            pass
+        pbar.progress((i+1)/days)
     
-    progress_bar.empty()
+    pbar.empty()
     return all_tenders
 
 @st.cache_data(ttl=3600, show_spinner=False)
-def fetch_ocds_details(tender_code):
-    """Consulta la API OCDS para detalles técnicos."""
-    url = f"https://api.mercadopublico.cl/APISOCDS/OCDS/record/{tender_code}"
+def fetch_ocds_rich_data(code):
+    """Obtiene OCDS y pre-procesa items para nombres reales"""
+    url = f"https://api.mercadopublico.cl/APISOCDS/OCDS/record/{code}"
     try:
-        r = requests.get(url, timeout=4)
+        r = requests.get(url, timeout=5)
         if r.status_code == 200:
             return r.json()
     except:
@@ -197,119 +211,175 @@ def fetch_ocds_details(tender_code):
 # --- UI PRINCIPAL ---
 
 with st.sidebar:
-    st.header("🎛️ Filtros")
-    
-    # Manejo de API Key (Secrets o Input manual)
+    st.header("Parámetros")
     ticket = st.secrets.get("MP_TICKET", None)
     if not ticket:
-        ticket = st.text_input("Tu Ticket de MercadoPublico", type="password")
-        if not ticket:
-            st.warning("🔒 Ingresa tu ticket para ver datos reales.")
-            st.stop()
-            
-    days_filter = st.slider("Antigüedad (Días)", 1, 5, 2)
-    search_txt = st.text_input("Palabras clave", placeholder="Ej: Hormigón, Diseño...")
-    region_sel = st.selectbox("Región", ["Todas", "Metropolitana", "Valparaíso", "Biobío", "Antofagasta", "Araucanía"])
+        ticket = st.text_input("Ticket API", type="password")
+        if not ticket: st.warning("Ticket Requerido"); st.stop()
+    
+    days_n = st.slider("Días atrás", 1, 7, 2)
+    search = st.text_input("Buscar texto...")
     
     st.divider()
-    st.caption("v2.2.0 • Producción")
+    st.markdown(f"**Guardados:** {len(st.session_state.saved_tenders)}")
 
-# Obtención de Datos
-raw_data = fetch_tenders_api(ticket, days_filter)
-
-# Filtrado
-filtered = []
-keywords = [k.strip().lower() for k in search_txt.split(",")] if search_txt else []
-
-for t in raw_data:
-    nombre = str(t.get('Nombre', '')).lower()
-    desc = str(t.get('Descripcion', '')).lower()
-    region_t = safe_get(t, ['Comprador', 'RegionUnidad'], "").lower()
-    
-    if region_sel != "Todas" and region_sel.lower() not in region_t:
-        continue
-    if keywords and not any(k in nombre or k in desc for k in keywords):
-        continue
-    filtered.append(t)
-
-# Métricas
 st.title("Monitor de Licitaciones")
-st.markdown("Vista en tiempo real de oportunidades de negocio.")
-m1, m2, m3 = st.columns(3)
-m1.metric("Oportunidades", len(filtered))
-m2.metric("Total Escaneado", len(raw_data))
-m3.metric("Estado API", "Conectado 🟢")
-st.divider()
 
-# Loop de Cards
-if not filtered:
-    st.info("🔍 No se encontraron licitaciones.")
-else:
-    for item in filtered:
-        code = item.get('CodigoExterno', 'S/I')
-        title = item.get('Nombre', 'Sin Título')
-        status = item.get('Estado', 'Publicada').capitalize()
-        
-        status_class = "status-publicada"
-        if "cerrada" in status.lower(): status_class = "status-cerrada"
-        elif "adjudicada" in status.lower(): status_class = "status-adjudicada"
+# TABS PRINCIPALES
+tab_explore, tab_saved = st.tabs(["🌎 Explorar", "🔖 Marcadores"])
 
-        org_name = safe_get(item, ['Comprador', 'NombreOrganismo'], "Organismo Desconocido")
-        region = safe_get(item, ['Comprador', 'RegionUnidad'], "Región no esp.")
+# --- TAB 1: EXPLORAR ---
+with tab_explore:
+    raw_feed = fetch_main_feed(ticket, days_n)
+    
+    # Filtrado
+    filtered = []
+    terms = [t.strip().lower() for t in search.split(",")] if search else []
+    
+    for t in raw_feed:
+        # Categorización automática
+        cats = categorize_tender(t)
+        t['custom_cats'] = cats # Guardamos en el objeto
         
-        date_close = format_relative_date(item.get('FechaCierre', ''))
-        date_pub = format_relative_date(item.get('FechaCreacion', ''))
+        # Filtro Texto
+        full_text = (str(t.get('Nombre')) + str(t.get('Descripcion')) + str(t.get('Comprador'))).lower()
+        if terms and not any(term in full_text for term in terms):
+            continue
+            
+        filtered.append(t)
+        
+    st.caption(f"Mostrando {len(filtered)} resultados recientes.")
+    
+    if not filtered:
+        st.info("No hay resultados.")
+    
+    for tender in filtered:
+        # Pre-cálculos UI
+        code = tender.get('CodigoExterno')
+        is_saved = any(x['CodigoExterno'] == code for x in st.session_state.saved_tenders)
+        
+        # Fechas
+        created_str = tender.get('FechaCreacion', '')
+        relative_time = get_relative_time(created_str)
+        
+        close_str = tender.get('FechaCierre', '')
+        try:
+            close_fmt = datetime.strptime(close_str, "%Y-%m-%dT%H:%M:%S").strftime("%d/%m/%Y %H:%M")
+        except:
+            close_fmt = close_str if close_str else "Sin fecha"
 
-        raw_desc = item.get('Descripcion', '')
-        # FIX: Ensure textwrap is imported and used correctly
-        short_desc = textwrap.shorten(raw_desc, width=220, placeholder="...")
+        # Organismo (Fix Desconocido)
+        comp = tender.get('Comprador', {})
+        org = comp.get('NombreOrganismo', 'Organismo Desconocido')
+        unit = comp.get('NombreUnidad', '')
+        region = comp.get('RegionUnidad', 'Región no esp.')
+        full_org = f"{org} — {unit}" if unit else org
+
+        # HTML Render
+        cat_html = "".join([f"<span class='cat-tag'>{c}</span>" for c in tender.get('custom_cats', [])])
+        status_color = "#DCFCE7" if tender.get('Estado') == 'Publicada' else "#F3F4F6"
+        status_text_color = "#166534" if tender.get('Estado') == 'Publicada' else "#374151"
         
-        # FIX: HTML string must NOT be indented to avoid Markdown code blocks
-        card_html = f"""
-<div class="tender-card">
-<div class="card-header">
-<span class="card-id">#{code}</span>
-<span class="card-badge {status_class}">{status}</span>
-</div>
-<div class="card-title">{title}</div>
-<div class="card-meta-grid">
-<div class="meta-item" title="Organismo"><span class="meta-icon">🏢</span> {org_name}</div>
-<div class="meta-item" title="Región"><span class="meta-icon">📍</span> {region}</div>
-<div class="meta-item" title="Cierre"><span class="meta-icon">⏳</span> {date_close}</div>
-<div class="meta-item" title="Publicado"><span class="meta-icon">📢</span> {date_pub}</div>
-</div>
-<div class="card-desc">{short_desc}</div>
-</div>
-"""
-        st.markdown(card_html, unsafe_allow_html=True)
+        desc = textwrap.shorten(tender.get('Descripcion', ''), width=200, placeholder="...")
+
+        st.markdown(f"""
+        <div class="tender-card">
+            <div class="card-top-row">
+                <div>
+                    <span class="card-id">{code}</span>
+                    <span class="status-badge" style="background:{status_color}; color:{status_text_color}">{tender.get('Estado')}</span>
+                </div>
+                <div style="font-size:0.8rem; color:#6B7280;">
+                    Creado: <b>{relative_time}</b>
+                </div>
+            </div>
+            <div class="card-title">{tender.get('Nombre')}</div>
+            <div>{cat_html}</div>
+            
+            <div class="meta-grid">
+                <div class="meta-item"><span class="meta-icon">🏢</span> {full_org}</div>
+                <div class="meta-item"><span class="meta-icon">📍</span> {region}</div>
+                <div class="meta-item" style="color:#DC2626;"><span class="meta-icon">⏳</span> Cierre: {close_fmt}</div>
+            </div>
+            <div style="font-size:0.9rem; color:#4B5563; margin-top:10px;">{desc}</div>
+        </div>
+        """, unsafe_allow_html=True)
+
+        # Botonera
+        c1, c2, c3 = st.columns([1, 2, 8])
         
-        # Actions
-        c1, c2 = st.columns([0.2, 0.8])
-        with c1:
-            st.link_button("🌐 Web", f"http://www.mercadopublico.cl/fichaLicitacion.html?idLicitacion={code}")
-        with c2:
-            with st.expander("🛠️ Ver Detalle Técnico (Items)"):
-                with st.spinner("Cargando datos..."):
-                    ocds_data = fetch_ocds_details(code)
-                    if ocds_data:
-                        try:
-                            # Safely extract items
-                            records = ocds_data.get('records', [])
-                            if records:
-                                items_list = records[0].get('compiledRelease', {}).get('tender', {}).get('items', [])
-                                clean_items = []
-                                for it in items_list:
-                                    clean_items.append({
-                                        "Descripción": it.get('description', '--'),
-                                        "Cantidad": it.get('quantity', 0),
-                                        "Unidad": it.get('unit', {}).get('name', '--'),
-                                        "UNSPSC": it.get('classification', {}).get('id', '--')
-                                    })
-                                st.dataframe(pd.DataFrame(clean_items), hide_index=True, use_container_width=True)
-                            else:
-                                st.warning("No hay items.")
-                        except Exception as e:
-                            st.error(f"Error parseando: {e}")
-                    else:
-                        st.error("Sin conexión OCDS.")
+        # Botón Guardar (Logic Toggle)
+        save_label = "✅ Guardado" if is_saved else "🔖 Guardar"
+        if c1.button(save_label, key=f"save_{code}"):
+            toggle_save(tender)
+            st.rerun()
+
+        # Link Externo
+        c2.link_button("🌐 Ver Ficha", f"http://www.mercadopublico.cl/fichaLicitacion.html?idLicitacion={code}")
+        
+        # Detalle Técnico (Deep Link OCDS)
+        with st.expander("🛠️ Análisis Técnico (OCDS)"):
+            with st.spinner("Conectando con API OCDS..."):
+                ocds = fetch_ocds_rich_data(code)
+                if ocds:
+                    try:
+                        # Extraer Items
+                        items = ocds['records'][0]['compiledRelease']['tender']['items']
+                        
+                        clean_items = []
+                        for it in items:
+                            # 1. Datos básicos
+                            base_desc = it.get('description', '')
+                            qty = it.get('quantity', 0)
+                            unspsc_id = it.get('classification', {}).get('id', '')
+                            uri = it.get('classification', {}).get('uri', '')
+                            
+                            # 2. EL SALTO EXTRA (Deep Fetch)
+                            # Si tenemos URI, vamos a buscar el nombre real del producto
+                            real_name = base_desc # Default
+                            
+                            if uri and "mercadopublico.cl" in uri:
+                                fetched_name = fetch_product_name_from_uri(uri, unspsc_id)
+                                if fetched_name:
+                                    real_name = f"{fetched_name} ({base_desc})"
+                            
+                            clean_items.append({
+                                "UNSPSC": unspsc_id,
+                                "Producto (Normalizado)": real_name,
+                                "Cantidad": qty,
+                                "Unidad": it.get('unit', {}).get('name', 'Unidad')
+                            })
+                        
+                        st.dataframe(pd.DataFrame(clean_items), use_container_width=True, hide_index=True)
+                        
+                    except Exception as e:
+                        st.warning("No se encontraron items estructurados.")
+                else:
+                    st.error("No hay datos OCDS disponibles.")
+
+
+# --- TAB 2: GUARDADOS ---
+with tab_saved:
+    if not st.session_state.saved_tenders:
+        st.info("No tienes licitaciones guardadas. Ve a la pestaña 'Explorar' y marca algunas.")
+    else:
+        # Convertir a DataFrame para permitir exportación si se desea
+        st.success(f"Tienes {len(st.session_state.saved_tenders)} marcadores.")
+        
+        for t in st.session_state.saved_tenders:
+            code = t['CodigoExterno']
+            
+            # Reutilizamos el diseño simple para la lista guardada
+            st.markdown(f"""
+            <div style="padding:15px; border:1px solid #E5E7EB; border-radius:8px; margin-bottom:10px; background:white;">
+                <div style="font-weight:bold; font-size:1.1rem;">{t.get('Nombre')}</div>
+                <div style="font-size:0.85rem; color:#6B7280; font-family:monospace;">{code}</div>
+            </div>
+            """, unsafe_allow_html=True)
+            
+            col_a, col_b = st.columns([1, 5])
+            if col_a.button("🗑️ Borrar", key=f"del_{code}"):
+                toggle_save(t)
+                st.rerun()
+            col_b.link_button("Ir a MP", f"http://www.mercadopublico.cl/fichaLicitacion.html?idLicitacion={code}")
 
