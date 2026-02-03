@@ -28,216 +28,144 @@ EXCLUDE_KEYWORDS = [
 
 ALL_KEYWORDS = [kw for sublist in CATEGORIES.values() for kw in sublist]
 
-# --- ENHANCED CSS FOR CLEAN TABLE DESIGN ---
+# --- COMPACT CSS FOR TABLE DESIGN ---
 st.markdown("""
 <style>
-    @import url('https://fonts.googleapis.com/css2?family=Work+Sans:wght@400;500;600&family=JetBrains+Mono:wght@500&display=swap');
+    @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=JetBrains+Mono:wght@500&display=swap');
     
-    /* Global Styles */
     .stApp { 
         background-color: #FAFBFC; 
-        font-family: 'Work Sans', -apple-system, BlinkMacSystemFont, sans-serif; 
+        font-family: 'IBM Plex Sans', sans-serif; 
         color: #1A1F36; 
     }
     
-    /* Hide Streamlit branding */
     #MainMenu {visibility: hidden;}
     footer {visibility: hidden;}
     header {visibility: hidden;}
     
-    /* Table Container */
+    /* Compact Table Container */
     .table-container {
         background: white;
-        border-radius: 8px;
-        box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+        border-radius: 6px;
+        box-shadow: 0 1px 2px rgba(0,0,0,0.05);
         overflow: hidden;
-        margin-bottom: 24px;
+        margin-bottom: 16px;
     }
     
-    /* TABLE HEADER */
+    /* Compact Header */
     .table-header {
         display: grid;
-        grid-template-columns: 100px 1fr 280px 160px 180px;
-        gap: 16px;
+        grid-template-columns: 110px 2fr 1.5fr 1fr 220px 140px;
+        gap: 12px;
         align-items: center;
-        background: linear-gradient(to bottom, #F7F8FA 0%, #F3F4F6 100%);
-        border-bottom: 1px solid #E1E4E8;
-        padding: 14px 20px;
+        background: #F8F9FA;
+        border-bottom: 2px solid #DEE2E6;
+        padding: 10px 16px;
         font-weight: 600;
-        font-size: 0.75rem;
-        color: #6B7B93;
+        font-size: 0.7rem;
+        color: #495057;
         text-transform: uppercase;
-        letter-spacing: 0.5px;
+        letter-spacing: 0.3px;
     }
     
-    /* TABLE ROW */
+    /* Compact Row */
     .table-row {
         display: grid;
-        grid-template-columns: 100px 1fr 280px 160px 180px;
-        gap: 16px;
+        grid-template-columns: 110px 2fr 1.5fr 1fr 220px 140px;
+        gap: 12px;
         align-items: center;
         background-color: #FFFFFF;
-        border-bottom: 1px solid #F0F2F5;
-        padding: 16px 20px;
-        transition: all 0.15s ease;
+        border-bottom: 1px solid #F1F3F5;
+        padding: 10px 16px;
+        transition: background-color 0.1s;
     }
     
     .table-row:hover { 
-        background-color: #F8FAFC;
-        box-shadow: inset 0 0 0 1px #E3E8EF;
-    }
-    
-    .table-row:last-child {
-        border-bottom: none;
+        background-color: #F8F9FA;
     }
 
-    /* Cell Styles */
+    /* Cell Styles - Compact */
     .cell-id { 
         font-family: 'JetBrains Mono', monospace; 
-        font-size: 0.8rem; 
-        color: #5B6BF5; 
+        font-size: 0.75rem; 
+        color: #4263EB; 
         font-weight: 600;
-        background: linear-gradient(135deg, #F0F3FF 0%, #E8EDFF 100%);
-        padding: 6px 10px;
-        border-radius: 6px;
+        background: #EDF2FF;
+        padding: 4px 8px;
+        border-radius: 4px;
         text-align: center;
         width: fit-content;
     }
     
     .cell-title { 
-        font-size: 0.925rem; 
+        font-size: 0.85rem; 
         font-weight: 600; 
-        color: #1A1F36; 
-        line-height: 1.4;
-        margin-bottom: 4px;
-    }
-    
-    .cell-desc { 
-        font-size: 0.8rem; 
-        color: #6B7B93; 
-        line-height: 1.45;
-        display: -webkit-box;
-        -webkit-line-clamp: 2;
-        -webkit-box-orient: vertical;
-        overflow: hidden;
-        text-overflow: ellipsis;
+        color: #212529; 
+        line-height: 1.3;
+        margin-bottom: 3px;
     }
     
     .cell-org { 
-        font-size: 0.875rem; 
-        font-weight: 600; 
-        color: #2D3748; 
-        margin-bottom: 2px;
+        font-size: 0.8rem; 
+        font-weight: 500; 
+        color: #343A40; 
+        line-height: 1.3;
     }
     
     .cell-unit { 
-        font-size: 0.8rem; 
-        color: #6B7B93; 
-        margin-top: 2px;
+        font-size: 0.75rem; 
+        color: #6C757D; 
+        line-height: 1.3;
     }
     
     .cell-date { 
-        font-size: 0.8rem; 
-        color: #525F7F; 
-        line-height: 1.6;
+        font-size: 0.75rem; 
+        color: #495057; 
+        line-height: 1.5;
     }
     
     .cell-deadline { 
-        font-size: 0.8rem; 
-        color: #E63946; 
+        font-size: 0.75rem; 
+        color: #DC3545; 
         font-weight: 600;
-        margin-top: 2px;
     }
 
-    /* TAGS */
-    .tag-container {
-        display: flex;
-        flex-wrap: wrap;
-        gap: 6px;
-        margin-bottom: 8px;
-    }
-    
     .tag-cat {
         display: inline-block;
-        font-size: 0.7rem;
-        padding: 4px 10px;
-        border-radius: 4px;
-        background: linear-gradient(135deg, #E8F0FE 0%, #D6E4FF 100%);
-        color: #1967D2;
+        font-size: 0.65rem;
+        padding: 2px 7px;
+        border-radius: 3px;
+        background: #D0EBFF;
+        color: #1864AB;
         font-weight: 500;
-        border: 1px solid #C2D9FF;
+        margin-right: 4px;
+        margin-bottom: 3px;
     }
 
-    /* Checkbox Styling */
-    .checkbox-cell {
-        display: flex;
-        align-items: center;
-        justify-content: center;
-    }
-    
-    .custom-checkbox {
-        width: 18px;
-        height: 18px;
-        border: 2px solid #D1D5DB;
-        border-radius: 4px;
-        cursor: pointer;
-        transition: all 0.2s;
-    }
-    
-    .custom-checkbox:hover {
-        border-color: #5B6BF5;
-    }
-    
-    .custom-checkbox.checked {
-        background-color: #5B6BF5;
-        border-color: #5B6BF5;
-    }
-
-    /* Override Streamlit Button Styles */
+    /* Compact Buttons */
     .stButton button { 
-        padding: 8px 14px !important; 
-        font-size: 0.8rem !important;
+        padding: 5px 10px !important; 
+        font-size: 0.75rem !important;
         font-weight: 500 !important;
-        border-radius: 6px !important;
-        transition: all 0.2s !important;
-        border: 1px solid #E1E4E8 !important;
+        border-radius: 4px !important;
+        height: 28px !important;
     }
     
-    .stButton button:hover {
-        transform: translateY(-1px);
-        box-shadow: 0 2px 4px rgba(0,0,0,0.08) !important;
-    }
-    
-    /* Column alignment */
     div[data-testid="column"] { 
         display: flex;
         flex-direction: column;
         justify-content: center;
     }
     
-    /* Stats Badge */
     .stats-badge {
         display: inline-block;
-        background: linear-gradient(135deg, #667EEA 0%, #764BA2 100%);
+        background: linear-gradient(135deg, #4263EB 0%, #3B5BDB 100%);
         color: white;
-        padding: 8px 16px;
-        border-radius: 20px;
-        font-size: 0.875rem;
+        padding: 6px 12px;
+        border-radius: 16px;
+        font-size: 0.8rem;
         font-weight: 600;
-        margin-left: 12px;
-    }
-    
-    /* Empty State */
-    .empty-state {
-        text-align: center;
-        padding: 60px 20px;
-        color: #6B7B93;
-    }
-    
-    .empty-state-icon {
-        font-size: 3rem;
-        margin-bottom: 16px;
-        opacity: 0.3;
+        margin-left: 8px;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -341,6 +269,40 @@ def fetch_feed(ticket, days=2):
     pbar.empty()
     return results
 
+# --- HELPER FUNCTIONS FOR DATA EXTRACTION ---
+def safe_get_nested(data, *keys, default=""):
+    """Safely get nested dictionary values"""
+    try:
+        value = data
+        for key in keys:
+            if isinstance(value, dict):
+                value = value.get(key, default)
+            else:
+                return default
+        return value if value is not None else default
+    except:
+        return default
+
+def parse_date(date_str, format_out="%d/%m/%Y"):
+    """Parse ISO date string to formatted date"""
+    if not date_str:
+        return ""
+    try:
+        dt = datetime.strptime(date_str[:10], "%Y-%m-%d")
+        return dt.strftime(format_out)
+    except:
+        return date_str
+
+def parse_datetime(datetime_str, format_out="%d/%m/%Y %H:%M"):
+    """Parse ISO datetime string to formatted datetime"""
+    if not datetime_str:
+        return ""
+    try:
+        dt = datetime.strptime(datetime_str, "%Y-%m-%dT%H:%M:%S")
+        return dt.strftime(format_out)
+    except:
+        return datetime_str
+
 # --- UI COMPONENTS ---
 def render_header():
     st.markdown("""
@@ -349,81 +311,78 @@ def render_header():
             <div>ID</div>
             <div>LICITACIÓN</div>
             <div>ORGANISMO</div>
+            <div>UNIDAD</div>
             <div>FECHAS</div>
-            <div style="text-align: center;">ACCIONES</div>
+            <div>ACCIONES</div>
         </div>
     """, unsafe_allow_html=True)
 
 def render_row(tender, saved_ids, index):
-    code = tender.get('CodigoExterno')
+    code = tender.get('CodigoExterno', 'N/A')
     is_saved = code in saved_ids
     
-    buyer = tender.get('Comprador', {})
-    if not isinstance(buyer, dict): 
-        buyer = {}
+    # Extract Comprador data properly
+    comprador = tender.get('Comprador', {})
+    if not isinstance(comprador, dict):
+        comprador = {}
     
-    org_name = buyer.get('NombreOrganismo', 'Organismo no indicado')
-    unit_name = buyer.get('NombreUnidad', '')
-    region = buyer.get('RegionUnidad', '')
+    org_name = comprador.get('NombreOrganismo', 'Organismo no indicado')
+    unit_name = comprador.get('NombreUnidad', 'Sin unidad')
+    region = comprador.get('RegionUnidad', '')
     
-    # Parse dates
-    try:
-        f_pub = datetime.strptime(tender.get('FechaCreacion', '')[:10], "%Y-%m-%d").strftime("%d/%m/%Y")
-    except: 
-        f_pub = "--"
+    # Extract Fechas properly
+    fechas = tender.get('Fechas', {})
+    if not isinstance(fechas, dict):
+        fechas = {}
     
-    try:
-        f_close_raw = tender.get('FechaCierre', '')
-        if f_close_raw:
-            f_close = datetime.strptime(f_close_raw, "%Y-%m-%dT%H:%M:%S").strftime("%d/%m/%Y")
-        else:
-            f_close = "Sin fecha"
-    except: 
-        f_close = "Sin fecha"
-
+    f_inicio = parse_datetime(fechas.get('FechaInicio', ''))
+    f_cierre = parse_datetime(fechas.get('FechaCierre', ''))
+    f_pub = parse_datetime(fechas.get('FechaPublicacion', ''))
+    
+    # Get URL
+    url_publica = tender.get('URL_Publica', f"https://www.mercadopublico.cl/fichaLicitacion.html?idLicitacion={code}")
+    
     # Categories
     cats = tender.get('CategoriasIDIEM', [])
     tags_html = "".join([f"<span class='tag-cat'>{c}</span>" for c in cats])
 
-    # Description
-    description = tender.get('Descripcion', '')[:200]
-    
-    # Row HTML
+    # Render Row
     st.markdown(f"""
     <div class="table-row">
         <div>
             <div class="cell-id">{code}</div>
         </div>
         <div>
-            <div class="tag-container">{tags_html}</div>
+            {f'<div style="margin-bottom: 4px;">{tags_html}</div>' if tags_html else ''}
             <div class="cell-title">{tender.get('Nombre', 'Sin título')}</div>
-            <div class="cell-desc">{description}</div>
         </div>
         <div>
             <div class="cell-org">{org_name}</div>
-            {f'<div class="cell-unit">{unit_name}</div>' if unit_name else ''}
-            {f'<div class="cell-unit" style="font-style:italic; color: #9CA3AF;">{region}</div>' if region else ''}
+            {f'<div class="cell-unit" style="margin-top: 2px;">{region}</div>' if region else ''}
         </div>
         <div>
-            <div class="cell-date">Publicación: {f_pub}</div>
-            <div class="cell-deadline">Cierre: {f_close}</div>
+            <div class="cell-unit">{unit_name}</div>
         </div>
-        <div style="display: flex; flex-direction: column; gap: 8px;">
+        <div>
+            {f'<div class="cell-date">Inicio: {f_inicio}</div>' if f_inicio else ''}
+            {f'<div class="cell-deadline">Cierre: {f_cierre}</div>' if f_cierre else '<div class="cell-date">Sin fecha cierre</div>'}
+            {f'<div class="cell-date" style="font-size: 0.7rem; margin-top: 2px;">Pub: {f_pub}</div>' if f_pub else ''}
+        </div>
+        <div style="display: flex; gap: 6px;">
     """, unsafe_allow_html=True)
     
-    # Action Buttons using Streamlit columns for proper alignment
-    col_btn1, col_btn2 = st.columns(2)
+    # Action Buttons
+    col1, col2 = st.columns([1, 1])
     
-    with col_btn1:
+    with col1:
         btn_text = "⭐" if is_saved else "☆"
         if st.button(btn_text, key=f"save_{code}_{index}", use_container_width=True, 
                     type="primary" if is_saved else "secondary"):
             toggle_save(tender)
             st.rerun()
     
-    with col_btn2:
-        st.link_button("🔗", f"https://www.mercadopublico.cl/fichaLicitacion.html?idLicitacion={code}", 
-                      use_container_width=True)
+    with col2:
+        st.link_button("🔗", url_publica, use_container_width=True)
     
     st.markdown("</div></div>", unsafe_allow_html=True)
 
@@ -478,13 +437,7 @@ with tab_feed:
     st.markdown("<br>", unsafe_allow_html=True)
     
     if not feed_data:
-        st.markdown("""
-        <div class="empty-state">
-            <div class="empty-state-icon">📭</div>
-            <h3>No se encontraron licitaciones</h3>
-            <p>No hay licitaciones que coincidan con los criterios de búsqueda.</p>
-        </div>
-        """, unsafe_allow_html=True)
+        st.info("📭 No se encontraron licitaciones con los criterios configurados.")
     else:
         render_header()
         for idx, t in enumerate(feed_data):
@@ -500,13 +453,7 @@ with tab_saved:
     st.markdown("<br>", unsafe_allow_html=True)
     
     if not saved_data:
-        st.markdown("""
-        <div class="empty-state">
-            <div class="empty-state-icon">⭐</div>
-            <h3>Biblioteca vacía</h3>
-            <p>Guarda licitaciones desde el feed para acceder a ellas rápidamente.</p>
-        </div>
-        """, unsafe_allow_html=True)
+        st.info("⭐ Guarda licitaciones desde el feed para acceder a ellas rápidamente.")
     else:
         render_header()
         for idx, t in enumerate(saved_data):
