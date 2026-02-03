@@ -5,9 +5,14 @@ import sqlite3
 from datetime import datetime, timedelta
 import textwrap
 import time
+import json
 
 # --- CONFIGURACIÓN DE PÁGINA ---
 st.set_page_config(layout="wide", page_title="Monitor de Licitaciones", page_icon="🏢")
+
+# --- ESTADO DE SESIÓN ---
+if 'selected_tender' not in st.session_state:
+    st.session_state.selected_tender = None
 
 # --- DATABASE SETUP (PERSISTENCIA REAL) ---
 DB_FILE = "tenders_data.db"
@@ -342,6 +347,51 @@ def categorize(text):
     text = text.lower()
     return [cat for cat, kws in CATEGORIES.items() if any(kw in text for kw in kws)]
 
+def create_timeline_from_dates(tender_data):
+    """Create a timeline from the Fechas section of tender data"""
+    fechas = tender_data.get('Fechas', {})
+    timeline_items = []
+    
+    # Mapeo de claves de fechas a descripciones legibles
+    date_descriptions = {
+        'FechaCreacion': 'Creación',
+        'FechaInicio': 'Inicio de recepción de ofertas',
+        'FechaFinal': 'Fin de recepción de ofertas',
+        'FechaCierre': 'Cierre de licitación',
+        'FechaPubRespuestas': 'Publicación de respuestas',
+        'FechaActoAperturaTecnica': 'Acto de apertura técnica',
+        'FechaActoAperturaEconomica': 'Acto de apertura económica',
+        'FechaPublicacion': 'Publicación',
+        'FechaAdjudicacion': 'Adjudicación',
+        'FechaEstimadaAdjudicacion': 'Fecha estimada de adjudicación',
+        'FechaVisitaTerreno': 'Visita a terreno',
+        'FechaEntregaAntecedentes': 'Entrega de antecedentes'
+    }
+    
+    for key, description in date_descriptions.items():
+        date_value = fechas.get(key)
+        if date_value:
+            # Parsear la fecha y formatearla
+            try:
+                parsed_date = datetime.fromisoformat(date_value.replace('Z', '+00:00'))
+                formatted_date = parsed_date.strftime('%d/%m/%Y %H:%M')
+                timeline_items.append({
+                    'date': formatted_date,
+                    'event': description,
+                    'key': key
+                })
+            except:
+                # Si falla el parseo, agregar tal cual
+                timeline_items.append({
+                    'date': date_value,
+                    'event': description,
+                    'key': key
+                })
+    
+    # Ordenar cronológicamente
+    timeline_items.sort(key=lambda x: x['date'])
+    return timeline_items
+
 # --- INTERFAZ PRINCIPAL ---
 
 # Professional sidebar styling
@@ -441,7 +491,10 @@ def render_list(is_saved_view_only=False):
             st.markdown(f"<div class='col-id'>{t_id}</div>", unsafe_allow_html=True)
             
         with c2:
-            st.markdown(f"<div class='col-name'>{tender.get('Nombre')}</div>", unsafe_allow_html=True)
+            # Botón que actúa como fila de tabla - al hacer clic se selecciona la licitación
+            if st.button(tender.get('Nombre'), key=f"select_{t_id}_{is_saved_view_only}", help="Ver detalles", type="secondary", use_container_width=True):
+                st.session_state.selected_tender = tender
+                st.rerun()
             if cats_html: st.markdown(f"<div>{cats_html}</div>", unsafe_allow_html=True)
             
         with c3:
