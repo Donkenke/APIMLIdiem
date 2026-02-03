@@ -2,20 +2,14 @@ import streamlit as st
 import sqlite3
 import json
 from datetime import datetime
-from utils import (
-    fetch_tenders,
-    categorize_tender,
-    format_date,
-    format_datetime,
-    safe_get
-)
+from utils import fetch_tenders, format_datetime
 
 # --- CONFIGURATION ---
 st.set_page_config(layout="wide", page_title="Monitor Licitaciones IDIEM", page_icon="📋")
 
 DB_FILE = "tenders.db"
 
-# --- STYLING ---
+# --- COMPACT STYLING ---
 st.markdown("""
 <style>
     @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@500&display=swap');
@@ -25,26 +19,24 @@ st.markdown("""
         font-family: 'Inter', sans-serif; 
     }
     
-    /* Hide Streamlit elements */
     #MainMenu, footer, header {visibility: hidden;}
     
-    /* Table styling */
     .tender-table {
         background: white;
-        border-radius: 8px;
+        border-radius: 6px;
         overflow: hidden;
-        margin: 16px 0;
-        box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+        margin: 12px 0;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.06);
     }
     
     .table-header {
         display: grid;
-        grid-template-columns: 120px 2fr 1.5fr 1fr 200px 100px;
+        grid-template-columns: 110px 2.5fr 1.5fr 1fr 180px 100px;
         gap: 12px;
         background: #F1F3F5;
-        padding: 12px 16px;
+        padding: 10px 14px;
         font-weight: 600;
-        font-size: 0.75rem;
+        font-size: 0.7rem;
         color: #495057;
         text-transform: uppercase;
         border-bottom: 2px solid #DEE2E6;
@@ -52,9 +44,9 @@ st.markdown("""
     
     .table-row {
         display: grid;
-        grid-template-columns: 120px 2fr 1.5fr 1fr 200px 100px;
+        grid-template-columns: 110px 2.5fr 1.5fr 1fr 180px 100px;
         gap: 12px;
-        padding: 12px 16px;
+        padding: 10px 14px;
         border-bottom: 1px solid #F1F3F5;
         align-items: center;
         transition: background 0.1s;
@@ -66,28 +58,35 @@ st.markdown("""
     
     .tender-id {
         font-family: 'JetBrains Mono', monospace;
-        font-size: 0.8rem;
+        font-size: 0.75rem;
         color: #4263EB;
         font-weight: 600;
         background: #E7F5FF;
-        padding: 4px 8px;
+        padding: 4px 7px;
         border-radius: 4px;
         text-align: center;
     }
     
     .tender-title {
-        font-size: 0.9rem;
+        font-size: 0.85rem;
         font-weight: 600;
         color: #212529;
-        margin-bottom: 4px;
+        margin-bottom: 2px;
         line-height: 1.3;
+    }
+    
+    .tender-desc {
+        font-size: 0.75rem;
+        color: #6C757D;
+        line-height: 1.3;
+        margin-top: 2px;
     }
     
     .tender-cat {
         display: inline-block;
-        font-size: 0.7rem;
-        padding: 2px 8px;
-        margin: 2px 4px 2px 0;
+        font-size: 0.65rem;
+        padding: 2px 6px;
+        margin: 2px 3px 2px 0;
         border-radius: 3px;
         background: #D0EBFF;
         color: #1864AB;
@@ -95,31 +94,35 @@ st.markdown("""
     }
     
     .org-name {
-        font-size: 0.85rem;
+        font-size: 0.8rem;
         font-weight: 500;
         color: #343A40;
+        line-height: 1.3;
     }
     
     .org-unit {
-        font-size: 0.75rem;
+        font-size: 0.72rem;
         color: #6C757D;
         margin-top: 2px;
+        line-height: 1.3;
     }
     
     .date-label {
-        font-size: 0.75rem;
+        font-size: 0.73rem;
         color: #495057;
+        line-height: 1.4;
     }
     
     .date-value {
-        font-size: 0.75rem;
+        font-size: 0.73rem;
         color: #DC3545;
         font-weight: 600;
+        line-height: 1.4;
     }
     
     .stButton button {
-        padding: 6px 12px !important;
-        font-size: 0.8rem !important;
+        padding: 5px 10px !important;
+        font-size: 0.75rem !important;
         border-radius: 4px !important;
     }
 </style>
@@ -127,7 +130,6 @@ st.markdown("""
 
 # --- DATABASE ---
 def init_db():
-    """Initialize SQLite database"""
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
     c.execute("""
@@ -141,7 +143,6 @@ def init_db():
     conn.close()
 
 def add_bookmark(tender_id, tender_data):
-    """Save a tender to bookmarks"""
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
     try:
@@ -158,7 +159,6 @@ def add_bookmark(tender_id, tender_data):
         conn.close()
 
 def remove_bookmark(tender_id):
-    """Remove a tender from bookmarks"""
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
     c.execute("DELETE FROM bookmarks WHERE tender_id = ?", (tender_id,))
@@ -166,7 +166,6 @@ def remove_bookmark(tender_id):
     conn.close()
 
 def get_bookmarks():
-    """Get all bookmarked tenders"""
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
     c.execute("SELECT tender_data FROM bookmarks ORDER BY created_at DESC")
@@ -175,7 +174,6 @@ def get_bookmarks():
     return [json.loads(row[0]) for row in rows]
 
 def is_bookmarked(tender_id):
-    """Check if tender is bookmarked"""
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
     c.execute("SELECT 1 FROM bookmarks WHERE tender_id = ?", (tender_id,))
@@ -185,7 +183,6 @@ def is_bookmarked(tender_id):
 
 # --- UI COMPONENTS ---
 def render_table_header():
-    """Render table header"""
     st.markdown("""
     <div class="tender-table">
         <div class="table-header">
@@ -199,36 +196,29 @@ def render_table_header():
     """, unsafe_allow_html=True)
 
 def render_tender_row(tender, index):
-    """Render a single tender row"""
+    # Extract data from API response structure
     tender_id = tender.get('CodigoExterno', 'N/A')
     nombre = tender.get('Nombre', 'Sin título')
+    descripcion = tender.get('Descripcion', '')
     
-    # Extract nested data safely - handle both dict and None cases
-    comprador = tender.get('Comprador')
+    # Comprador object
+    comprador = tender.get('Comprador', {})
     if not isinstance(comprador, dict):
         comprador = {}
     
-    fechas = tender.get('Fechas')
+    org_name = comprador.get('NombreOrganismo', 'No indicado')
+    unit_name = comprador.get('NombreUnidad', 'No indicado')
+    region = comprador.get('RegionUnidad', '')
+    
+    # Fechas object
+    fechas = tender.get('Fechas', {})
     if not isinstance(fechas, dict):
         fechas = {}
     
-    # Extract comprador fields with fallbacks
-    org_name = comprador.get('NombreOrganismo', None)
-    if not org_name:
-        org_name = 'Organismo no indicado'
+    fecha_pub = fechas.get('FechaPublicacion', '')
+    fecha_cierre = fechas.get('FechaCierre', '')
     
-    unit_name = comprador.get('NombreUnidad', None)
-    if not unit_name:
-        unit_name = 'Unidad no indicada'
-    
-    region = comprador.get('RegionUnidad', '')
-    
-    # Extract dates with fallbacks
-    fecha_inicio = fechas.get('FechaInicio', None)
-    fecha_cierre = fechas.get('FechaCierre', None)
-    
-    # Format dates
-    fecha_inicio_fmt = format_datetime(fecha_inicio) if fecha_inicio else ''
+    fecha_pub_fmt = format_datetime(fecha_pub) if fecha_pub else ''
     fecha_cierre_fmt = format_datetime(fecha_cierre) if fecha_cierre else ''
     
     # Categories
@@ -236,7 +226,7 @@ def render_tender_row(tender, index):
     cat_html = ''.join([f'<span class="tender-cat">{cat}</span>' for cat in categories])
     
     # URL
-    url = tender.get('URL_Publica', f'https://www.mercadopublico.cl/Procurement/Modules/RFB/DetailsAcquisition.aspx?idLicitacion={tender_id}')
+    url = f'https://www.mercadopublico.cl/Procurement/Modules/RFB/DetailsAcquisition.aspx?idLicitacion={tender_id}'
     
     # Check if bookmarked
     bookmarked = is_bookmarked(tender_id)
@@ -248,8 +238,9 @@ def render_tender_row(tender, index):
             <div class="tender-id">{tender_id}</div>
         </div>
         <div>
-            {cat_html}
+            {cat_html if cat_html else ''}
             <div class="tender-title">{nombre}</div>
+            {f'<div class="tender-desc">{descripcion[:120]}...</div>' if len(descripcion) > 120 else f'<div class="tender-desc">{descripcion}</div>' if descripcion else ''}
         </div>
         <div>
             <div class="org-name">{org_name}</div>
@@ -259,24 +250,24 @@ def render_tender_row(tender, index):
             <div class="org-unit">{unit_name}</div>
         </div>
         <div>
-            {f'<div class="date-label">Inicio: {fecha_inicio_fmt}</div>' if fecha_inicio_fmt else ''}
-            {f'<div class="date-value">Cierre: {fecha_cierre_fmt}</div>' if fecha_cierre_fmt else '<div class="date-label">Sin fecha cierre</div>'}
+            {f'<div class="date-label">Pub: {fecha_pub_fmt}</div>' if fecha_pub_fmt else ''}
+            {f'<div class="date-value">Cierre: {fecha_cierre_fmt}</div>' if fecha_cierre_fmt else '<div class="date-label">Sin cierre</div>'}
         </div>
-        <div style="display: flex; gap: 6px; align-items: center;">
+        <div style="display: flex; gap: 5px; align-items: center;">
     """, unsafe_allow_html=True)
     
-    # Bookmark button
+    # Bookmark and Link buttons
     col1, col2 = st.columns([1, 1])
     with col1:
         btn_label = "⭐" if bookmarked else "☆"
         btn_type = "primary" if bookmarked else "secondary"
-        if st.button(btn_label, key=f"bookmark_{tender_id}_{index}", type=btn_type):
+        if st.button(btn_label, key=f"save_{tender_id}_{index}", type=btn_type):
             if bookmarked:
                 remove_bookmark(tender_id)
-                st.toast(f"Eliminado: {tender_id}", icon="❌")
+                st.toast(f"❌ Eliminado", icon="🗑️")
             else:
                 add_bookmark(tender_id, tender)
-                st.toast(f"Guardado: {tender_id}", icon="💾")
+                st.toast(f"✅ Guardado", icon="💾")
             st.rerun()
     
     with col2:
@@ -285,12 +276,10 @@ def render_tender_row(tender, index):
     st.markdown("</div></div>", unsafe_allow_html=True)
 
 def render_table_footer():
-    """Close table div"""
     st.markdown("</div>", unsafe_allow_html=True)
 
 # --- MAIN APP ---
 def main():
-    # Initialize database
     init_db()
     
     # Sidebar
@@ -299,31 +288,28 @@ def main():
         st.markdown("### IDIEM - UC")
         st.markdown("---")
         
-        # Get API ticket
+        # API Ticket
         ticket = st.secrets.get("MP_TICKET", None)
         if not ticket:
             ticket = st.text_input("🔑 Ticket API", type="password")
         
         if not ticket:
-            st.error("Se requiere un ticket de API")
+            st.error("⚠️ Se requiere ticket de API")
             st.stop()
         
         # Days to scan
         days = st.slider("📅 Días a escanear", 1, 7, 2)
         
-        # Debug mode
-        debug_mode = st.checkbox("🐛 Modo Debug", value=False)
-        
         st.markdown("---")
-        st.markdown("#### Filtros Activos")
-        st.info("Laboratorio, Geotecnia, Ingeniería, ITO")
+        st.markdown("#### 🏷️ Filtros Activos")
+        st.info("✓ Laboratorio\n\n✓ Geotecnia\n\n✓ Ingeniería\n\n✓ ITO")
     
     # Main content
     st.title("Panel de Control")
     st.markdown("---")
     
     # Tabs
-    tab1, tab2 = st.tabs(["📡 Feed en Vivo", "⭐ Mis Marcadores"])
+    tab1, tab2 = st.tabs(["📡 Feed en Vivo", "⭐ Guardados"])
     
     with tab1:
         col1, col2 = st.columns([3, 1])
@@ -335,20 +321,14 @@ def main():
                 st.rerun()
         
         # Fetch tenders
-        with st.spinner("Consultando MercadoPúblico..."):
+        with st.spinner("🔍 Consultando MercadoPúblico..."):
             tenders = fetch_tenders(ticket, days)
         
         if not tenders:
-            st.warning("No se encontraron licitaciones con los criterios configurados.")
+            st.warning("📭 No se encontraron licitaciones relevantes.")
         else:
-            st.success(f"✅ {len(tenders)} licitaciones encontradas")
+            st.success(f"✅ **{len(tenders)} licitaciones** encontradas")
             
-            # Debug mode - show first tender structure
-            if debug_mode and tenders:
-                with st.expander("🔍 Ver estructura del primer tender"):
-                    st.json(tenders[0])
-            
-            # Render table
             render_table_header()
             for idx, tender in enumerate(tenders):
                 render_tender_row(tender, idx)
@@ -360,11 +340,10 @@ def main():
         bookmarks = get_bookmarks()
         
         if not bookmarks:
-            st.info("⭐ No tienes licitaciones guardadas. Usa el botón ☆ para marcar favoritos.")
+            st.info("⭐ No tienes licitaciones guardadas.\n\nUsa el botón ☆ en el feed para marcar favoritos.")
         else:
-            st.success(f"📌 {len(bookmarks)} licitaciones guardadas")
+            st.success(f"📌 **{len(bookmarks)} licitaciones** guardadas")
             
-            # Render table
             render_table_header()
             for idx, tender in enumerate(bookmarks):
                 render_tender_row(tender, f"saved_{idx}")
