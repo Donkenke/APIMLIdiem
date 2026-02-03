@@ -17,7 +17,7 @@ st.set_page_config(page_title="Monitor de Licitaciones", page_icon="📊", layou
 BASE_URL = "https://api.mercadopublico.cl/servicios/v1/publico"
 DB_FILE = "licitaciones.db"
 
-# --- KEYWORD MAPPING (Cleaned Values) ---
+# --- KEYWORD MAPPING ---
 KEYWORD_MAPPING = {
   "Asesoría inspección": "Inspección Técnica y Supervisión",
   "AIF": "Inspección Técnica y Supervisión",
@@ -256,6 +256,12 @@ def format_chilean_currency(val):
     except:
         return "$0"
 
+def clean_text(text):
+    """Capitalizes text nicely (Title Case)."""
+    if not text:
+        return ""
+    return str(text).strip().title()
+
 def parse_tender_data(raw_tender):
     code = raw_tender.get('CodigoExterno', 'N/A')
     comprador = raw_tender.get('Comprador', {})
@@ -267,9 +273,9 @@ def parse_tender_data(raw_tender):
     return {
         "CodigoExterno": code,
         "Link": link_url,
-        "Nombre": raw_tender.get('Nombre', 'Sin Nombre'),
-        "Organismo": comprador.get('NombreOrganismo', 'N/A'),
-        "Unidad": comprador.get('NombreUnidad', 'N/A'),
+        "Nombre": clean_text(raw_tender.get('Nombre', 'Sin Nombre')), # Capitalized
+        "Organismo": clean_text(comprador.get('NombreOrganismo', 'N/A')), # Capitalized
+        "Unidad": clean_text(comprador.get('NombreUnidad', 'N/A')), # Capitalized
         "FechaPublicacion": parse_date(fechas.get('FechaPublicacion')),
         "FechaCierre": parse_date(fechas.get('FechaCierre')),
         "Estado": raw_tender.get('Estado', ''),
@@ -279,9 +285,6 @@ def parse_tender_data(raw_tender):
     }
 
 def get_category_info(text):
-    """
-    Returns (Category, MatchedKeyword)
-    """
     text_lower = text.lower()
     for keyword, cat in KEYWORD_MAPPING.items():
         if keyword.lower() in text_lower:
@@ -343,38 +346,51 @@ def main():
             summaries = fetch_summaries_for_range(start_d, end_d, ticket)
         
         filtered_candidates = []
+        audit_log = [] # List to store ALL fetched items for CSV
         
         # DEBUG COUNTERS
         debug_stats = {
             "total_fetched": len(summaries),
             "passed_keyword": 0,
-            "passed_date": 0,
-            "rejected_samples": []
+            "passed_date": 0
         }
         
-        # Phase 1: Quick Filter
+        # Phase 1: Filter Logic & Audit Log
         for s in summaries:
             full_text = f"{s.get('Nombre', '')} {s.get('Descripcion', '')}"
             cat, match_kw = get_category_info(full_text)
-            
             c_date = parse_date(s.get('FechaCierre'))
             
+            # Audit Record (Default: Rejected)
+            log_entry = {
+                "CodigoExterno": s.get('CodigoExterno'),
+                "Nombre": s.get('Nombre'),
+                "FechaCierre": s.get('FechaCierre'),
+                "Estado Filtro": "Rechazado",
+                "Motivo Rechazo": "Sin Match Palabras Clave",
+                "Palabra Clave": ""
+            }
+
             if cat:
                 debug_stats["passed_keyword"] += 1
+                log_entry["Palabra Clave"] = match_kw
+                
                 if is_date_valid(c_date):
                     debug_stats["passed_date"] += 1
+                    # Accepted
                     s['_cat'] = cat
                     s['_kw'] = match_kw 
                     filtered_candidates.append(s)
-            else:
-                if len(debug_stats["rejected_samples"]) < 10:
-                     debug_stats["rejected_samples"].append({
-                         "ID": s.get('CodigoExterno'),
-                         "Nombre": s.get('Nombre'),
-                         "Razón": "Sin Palabras Clave"
-                     })
+                    
+                    log_entry["Estado Filtro"] = "Aceptado"
+                    log_entry["Motivo Rechazo"] = ""
+                else:
+                    log_entry["Motivo Rechazo"] = "Fecha Cierre Vencida"
+            
+            audit_log.append(log_entry)
         
         st.session_state['debug_stats'] = debug_stats
+        st.session_state['audit_log'] = audit_log # Store for CSV download
         
         # Phase 2: Fetch Details
         final_data = []
@@ -417,10 +433,11 @@ def main():
             
             df_results["Web"] = df_results["Link"]
             
-            # UPDATED COLUMN ORDER (Included Organismo & Unidad)
+            # MODERNIZED COLUMN ORDER & WIDTHS
+            # Nombre, Organismo, Unidad are now Capitalized by the parser
             cols_order = [
                 "Web", "CodigoExterno", 
-                "Nombre", "Organismo", "Unidad", # <--- Restored
+                "Nombre", "Organismo", "Unidad",
                 "Categoría", "Palabra Clave", 
                 "FechaPublicacion", "FechaCierre", "MontoStr",
                 "Guardar", "Ver"
@@ -433,7 +450,7 @@ def main():
                 column_order=cols_order,
                 column_config={
                     "Web": st.column_config.LinkColumn(
-                        "Web", display_text="🔗", width="small", help="MercadoPúblico"
+                        "Web", display_text="🔗", width="small"
                     ),
                     "CodigoExterno": st.column_config.TextColumn("ID", width="small"),
                     "Nombre": st.column_config.TextColumn("Nombre", width="large"),
@@ -448,7 +465,7 @@ def main():
                         "Cierre", format="D MMM YYYY", width="medium"
                     ),
                     "MontoStr": st.column_config.TextColumn(
-                        "Monto (CLP)", width="medium"
+                        "Monto", width="medium" # Simpler Header
                     ),
                     "Guardar": st.column_config.CheckboxColumn(
                         "Guardar", width="small", help="Guardar en DB"
@@ -465,7 +482,6 @@ def main():
 
             # --- HANDLE 'VER' SELECTION ---
             tenders_to_explore = edited_df[edited_df["Ver"] == True]
-            
             if not tenders_to_explore.empty:
                 st.session_state['selected_tender'] = tenders_to_explore.iloc[0].to_dict()
                 if len(tenders_to_explore) > 1:
@@ -489,20 +505,32 @@ def main():
         else:
             st.info("No hay resultados. Realiza una búsqueda.")
 
-        # --- DEBUG SECTION ---
-        if "debug_stats" in st.session_state:
+        # --- DEBUG / CSV SECTION ---
+        if "debug_stats" in st.session_state and "audit_log" in st.session_state:
             stats = st.session_state["debug_stats"]
-            with st.expander("🕵️ Depuración (Debug) - Ver qué detectó la API"):
+            audit_df = pd.DataFrame(st.session_state["audit_log"])
+            
+            with st.expander("🕵️ Depuración y Descarga de Datos (Audit Log)"):
                 col_d1, col_d2, col_d3 = st.columns(3)
-                col_d1.metric("Total Fetched (API)", stats["total_fetched"])
-                col_d2.metric("Pasaron Filtro Palabras", stats["passed_keyword"])
-                col_d3.metric("Pasaron Filtro Fecha", stats["passed_date"])
+                col_d1.metric("Licitaciones API", stats["total_fetched"])
+                col_d2.metric("Matches Keyword", stats["passed_keyword"])
+                col_d3.metric("Visibles (Final)", len(st.session_state.search_results))
                 
-                st.write("### Muestra de Licitaciones RECHAZADAS (Sin Coincidencia)")
-                if stats["rejected_samples"]:
-                    st.dataframe(pd.DataFrame(stats["rejected_samples"]), use_container_width=True)
-                else:
-                    st.write("No hubo rechazos o no se generaron muestras.")
+                st.write("### Descargar Registro Completo (CSV)")
+                st.write("Descarga este archivo para revisar qué licitaciones fueron encontradas, cuáles fueron rechazadas y por qué.")
+                
+                csv = audit_df.to_csv(index=False).encode('utf-8')
+                
+                st.download_button(
+                    label="📥 Descargar Reporte de Filtros (CSV)",
+                    data=csv,
+                    file_name="licitaciones_debug_audit.csv",
+                    mime="text/csv",
+                )
+                
+                st.write("### Muestra de Datos de Auditoría")
+                st.dataframe(audit_df.head(10), use_container_width=True)
+
 
     # --- TAB 2: DETAILS ---
     with tab_detail:
@@ -520,7 +548,7 @@ def main():
             d_col1, d_col2, d_col3 = st.columns(3)
             with d_col1:
                 st.metric("Organismo", row_data["Organismo"])
-                st.metric("Unidad", row_data["Unidad"]) # Added
+                st.metric("Unidad", row_data["Unidad"])
             with d_col2:
                 pub = row_data["FechaPublicacion"]
                 if isinstance(pub, str): pub = parse_date(pub)
