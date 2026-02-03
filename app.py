@@ -1,576 +1,362 @@
 import streamlit as st
 import requests
-import json
-from datetime import datetime, timedelta
 import pandas as pd
-from typing import List, Dict, Any
+from datetime import datetime, timedelta
+import textwrap
 import time
 
-# Page configuration
+# --- CONFIGURACIÓN DE PÁGINA ---
 st.set_page_config(
-    page_title="Mercado Público - Buscador de Licitaciones",
-    page_icon="🏛️",
     layout="wide",
+    page_title="Monitor de Licitaciones",
+    page_icon="🏢",
     initial_sidebar_state="expanded"
 )
 
-# Custom CSS for modern, clean UI
-st.markdown("""
-<style>
-    /* Main container styling */
-    .main {
-        padding: 0rem 1rem;
-    }
-    
-    /* Header styling */
-    .header-container {
-        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-        padding: 2rem;
-        border-radius: 10px;
-        margin-bottom: 2rem;
-        color: white;
-        box-shadow: 0 4px 6px rgba(0,0,0,0.1);
-    }
-    
-    .header-title {
-        font-size: 2.5rem;
-        font-weight: 700;
-        margin-bottom: 0.5rem;
-    }
-    
-    .header-subtitle {
-        font-size: 1.1rem;
-        opacity: 0.9;
-    }
-    
-    /* Tender card styling */
-    .tender-card {
-        background: white;
-        border: 1px solid #e5e7eb;
-        border-radius: 12px;
-        padding: 1.5rem;
-        margin-bottom: 1.5rem;
-        box-shadow: 0 2px 4px rgba(0,0,0,0.05);
-        transition: all 0.3s ease;
-    }
-    
-    .tender-card:hover {
-        box-shadow: 0 8px 16px rgba(0,0,0,0.1);
-        border-color: #667eea;
-        transform: translateY(-2px);
-    }
-    
-    .tender-header {
-        display: flex;
-        justify-content: space-between;
-        align-items: start;
-        margin-bottom: 1rem;
-    }
-    
-    .tender-code {
-        background: #667eea;
-        color: white;
-        padding: 0.4rem 0.8rem;
-        border-radius: 6px;
-        font-weight: 600;
-        font-size: 0.9rem;
-        font-family: 'Courier New', monospace;
-    }
-    
-    .tender-title {
-        font-size: 1.2rem;
-        font-weight: 600;
-        color: #1f2937;
-        margin: 0.5rem 0;
-        line-height: 1.4;
-    }
-    
-    .tender-org {
-        color: #6b7280;
-        font-size: 0.95rem;
-        margin-bottom: 0.5rem;
-    }
-    
-    .tender-meta {
-        display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-        gap: 1rem;
-        margin: 1rem 0;
-        padding: 1rem;
-        background: #f9fafb;
-        border-radius: 8px;
-    }
-    
-    .meta-item {
-        display: flex;
-        flex-direction: column;
-    }
-    
-    .meta-label {
-        font-size: 0.75rem;
-        text-transform: uppercase;
-        color: #6b7280;
-        font-weight: 600;
-        letter-spacing: 0.5px;
-        margin-bottom: 0.25rem;
-    }
-    
-    .meta-value {
-        font-size: 0.95rem;
-        color: #1f2937;
-        font-weight: 500;
-    }
-    
-    .status-badge {
-        display: inline-block;
-        padding: 0.4rem 0.8rem;
-        border-radius: 20px;
-        font-size: 0.85rem;
-        font-weight: 600;
-    }
-    
-    .status-publicada {
-        background: #dcfce7;
-        color: #166534;
-    }
-    
-    .status-cerrada {
-        background: #fee2e2;
-        color: #991b1b;
-    }
-    
-    .status-adjudicada {
-        background: #dbeafe;
-        color: #1e40af;
-    }
-    
-    .category-tag {
-        display: inline-block;
-        background: #f3f4f6;
-        color: #374151;
-        padding: 0.3rem 0.6rem;
-        border-radius: 6px;
-        font-size: 0.8rem;
-        margin-right: 0.5rem;
-        margin-top: 0.5rem;
-    }
-    
-    .action-buttons {
-        display: flex;
-        gap: 0.5rem;
-        margin-top: 1rem;
-    }
-    
-    .btn-primary {
-        background: #667eea;
-        color: white;
-        padding: 0.6rem 1.2rem;
-        border-radius: 6px;
-        text-decoration: none;
-        font-weight: 500;
-        display: inline-block;
-        transition: all 0.2s;
-    }
-    
-    .btn-primary:hover {
-        background: #5568d3;
-        text-decoration: none;
-    }
-    
-    .btn-secondary {
-        background: #f3f4f6;
-        color: #374151;
-        padding: 0.6rem 1.2rem;
-        border-radius: 6px;
-        text-decoration: none;
-        font-weight: 500;
-        display: inline-block;
-        transition: all 0.2s;
-    }
-    
-    .btn-secondary:hover {
-        background: #e5e7eb;
-        text-decoration: none;
-    }
-    
-    /* Sidebar styling */
-    .sidebar .sidebar-content {
-        background: #f9fafb;
-    }
-    
-    /* Stats cards */
-    .stats-container {
-        display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-        gap: 1rem;
-        margin-bottom: 2rem;
-    }
-    
-    .stat-card {
-        background: white;
-        padding: 1.5rem;
-        border-radius: 10px;
-        border: 1px solid #e5e7eb;
-        box-shadow: 0 2px 4px rgba(0,0,0,0.05);
-    }
-    
-    .stat-value {
-        font-size: 2rem;
-        font-weight: 700;
-        color: #667eea;
-    }
-    
-    .stat-label {
-        font-size: 0.9rem;
-        color: #6b7280;
-        margin-top: 0.5rem;
-    }
-    
-    /* Loading animation */
-    .loading-spinner {
-        display: inline-block;
-        width: 20px;
-        height: 20px;
-        border: 3px solid rgba(102, 126, 234, 0.3);
-        border-radius: 50%;
-        border-top-color: #667eea;
-        animation: spin 1s ease-in-out infinite;
-    }
-    
-    @keyframes spin {
-        to { transform: rotate(360deg); }
-    }
-</style>
-""", unsafe_allow_html=True)
+# --- ESTADO DE SESIÓN (Persistencia de Marcadores) ---
+if 'saved_tenders' not in st.session_state:
+    st.session_state.saved_tenders = []
 
-# Configuration
+# --- CONFIGURACIÓN DE CATEGORÍAS (Lógica IDIEM) ---
 CATEGORIES = {
     "Laboratorio/Materiales": ["laboratorio", "ensayo", "hormigón", "probeta", "asfalto", "áridos", "cemento"],
     "Geotecnia/Suelos": ["geotecnia", "suelo", "calicata", "sondaje", "mecánica de suelo", "estratigrafía"],
     "Ingeniería/Estructuras": ["estructura", "cálculo", "diseño ingeniería", "sísmico", "patología", "puente", "viaducto"],
-    "Inspección Técnica (ITO)": ["ito", "inspección técnica", "supervisión", "fiscalización de obra", "hito"],
-    "Obras Sanitarias": ["agua potable", "alcantarillado", "sanitaria", "saneamiento", "aducción"],
-    "Vialidad": ["pavimento", "carpeta asfáltica", "señalización", "demarcación", "camino"],
-    "Construcción": ["edificación", "construcción", "obra civil", "montaje"]
+    "Inspección Técnica (ITO)": ["ito", "inspección técnica", "supervisión", "fiscalización de obra", "hito"]
 }
 
-EXCLUDE_KEYWORDS = [
-    "odontología", "dental", "médico", "clínico", "salud", "examen de sangre",
-    "psicotécnico", "funda", "resina", "mallas bioabsorbibles", "arqueológico",
-    "artística", "evento", "limpieza de fosas", "escritorio", "alimentación"
-]
+# --- ESTILOS CSS (Clean UI) ---
+st.markdown("""
+<style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
 
-def is_relevant(name: str, custom_keywords: List[str] = None) -> bool:
-    """Check if tender is relevant based on keywords"""
-    name_low = name.lower()
+    .stApp { background-color: #F9FAFB; font-family: 'Inter', sans-serif; color: #111827; }
     
-    # Use custom keywords if provided, otherwise use all categories
-    if custom_keywords:
-        keywords = custom_keywords
-    else:
-        keywords = [kw for sublist in CATEGORIES.values() for kw in sublist]
-    
-    has_keyword = any(k.lower() in name_low for k in keywords)
-    is_not_excluded = not any(e in name_low for e in EXCLUDE_KEYWORDS)
-    
-    return has_keyword and is_not_excluded
+    /* Tabs */
+    .stTabs [data-baseweb="tab-list"] { gap: 8px; }
+    .stTabs [data-baseweb="tab"] {
+        height: 45px;
+        background-color: #FFFFFF;
+        border-radius: 6px;
+        padding: 0 16px;
+        color: #6B7280;
+        font-weight: 500;
+        border: 1px solid #E5E7EB;
+    }
+    .stTabs [aria-selected="true"] {
+        background-color: #EFF6FF;
+        color: #2563EB;
+        border-color: #BFDBFE;
+    }
 
-def categorize_tender(tender: Dict[str, Any]) -> List[str]:
-    """Categorize tender based on keywords"""
-    text = (tender.get('Nombre', '') + " " + tender.get('Descripcion', '')).lower()
-    detected_cats = []
+    /* Cards */
+    .tender-card {
+        background-color: #FFFFFF;
+        border: 1px solid #E5E7EB;
+        border-radius: 8px;
+        padding: 20px;
+        margin-bottom: 16px;
+        box-shadow: 0 1px 2px rgba(0,0,0,0.05);
+        transition: box-shadow 0.2s;
+    }
+    .tender-card:hover {
+        box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+        border-color: #93C5FD;
+    }
+
+    /* Typography inside Card */
+    .card-header-row { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
+    .card-id { font-family: monospace; font-size: 0.8rem; color: #2563EB; background: #EFF6FF; padding: 2px 8px; border-radius: 4px; border: 1px solid #DBEAFE; }
+    .card-title { font-size: 1.1rem; font-weight: 600; color: #111827; line-height: 1.4; margin-bottom: 8px; }
     
+    /* Metadata Grid */
+    .meta-grid { display: flex; flex-wrap: wrap; gap: 16px; font-size: 0.85rem; color: #4B5563; margin-top: 12px; border-top: 1px solid #F3F4F6; padding-top: 12px; }
+    .meta-item { display: flex; align-items: center; gap: 6px; }
+    .meta-icon { font-size: 1rem; }
+
+    /* Tags */
+    .cat-tag { 
+        font-size: 0.75rem; 
+        padding: 2px 8px; 
+        border-radius: 12px; 
+        background-color: #FEF3C7; 
+        color: #92400E; 
+        border: 1px solid #FDE68A;
+        margin-right: 4px;
+        display: inline-block;
+        font-weight: 600;
+    }
+</style>
+""", unsafe_allow_html=True)
+
+# --- HELPER FUNCTIONS ---
+
+def get_relative_time(date_str):
+    if not date_str: return ""
+    try:
+        # Try full ISO format first
+        dt = datetime.strptime(date_str, "%Y-%m-%dT%H:%M:%S")
+    except:
+        try:
+            # Try simple date
+            dt = datetime.strptime(date_str, "%Y-%m-%d")
+        except:
+            return date_str
+            
+    now = datetime.now()
+    diff = now - dt
+    
+    if diff < timedelta(minutes=1): return "Hace un instante"
+    if diff < timedelta(hours=1): return f"Hace {int(diff.seconds/60)} min"
+    if diff < timedelta(hours=24): return f"Hace {int(diff.seconds/3600)} h"
+    if diff < timedelta(days=2): return "Ayer"
+    if diff < timedelta(days=7): return f"Hace {diff.days} días"
+    return dt.strftime("%d/%m/%Y")
+
+def categorize_tender(text):
+    text_lower = text.lower()
+    detected = []
     for cat_name, keywords in CATEGORIES.items():
-        if any(k in text for k in keywords):
-            detected_cats.append(cat_name)
+        if any(k in text_lower for k in keywords):
+            detected.append(cat_name)
+    return detected
+
+def toggle_save_tender(tender_data):
+    # Check if exists
+    code = tender_data['CodigoExterno']
+    exists = next((t for t in st.session_state.saved_tenders if t['CodigoExterno'] == code), None)
     
-    return detected_cats if detected_cats else ["General/No Categorizado"]
-
-def fetch_tender_detail(code: str) -> Dict[str, Any]:
-    """Fetch detailed tender information from OCDS API (no ticket required)"""
-    try:
-        url = f"https://api.mercadopublico.cl/APISOCDS/OCDS/tender/{code}"
-        response = requests.get(url, timeout=10)
-        
-        if response.status_code == 200:
-            return response.json()
-    except Exception as e:
-        st.error(f"Error fetching details for {code}: {e}")
-    
-    return {}
-
-def format_currency(amount):
-    """Format currency in Chilean Pesos"""
-    if amount is None:
-        return "No informado"
-    try:
-        return f"${amount:,.0f} CLP".replace(",", ".")
-    except:
-        return "No informado"
-
-def format_date(date_str):
-    """Format date string"""
-    if not date_str:
-        return "No informada"
-    try:
-        dt = datetime.fromisoformat(date_str.replace('Z', '+00:00'))
-        return dt.strftime("%d/%m/%Y")
-    except:
-        return date_str
-
-def get_status_class(estado: str) -> str:
-    """Get CSS class for status badge"""
-    estado_lower = estado.lower()
-    if 'publicada' in estado_lower:
-        return 'status-publicada'
-    elif 'cerrada' in estado_lower:
-        return 'status-cerrada'
-    elif 'adjudicada' in estado_lower:
-        return 'status-adjudicada'
+    if exists:
+        st.session_state.saved_tenders.remove(exists)
+        st.toast(f"Eliminado: {code}")
     else:
-        return 'status-publicada'
+        st.session_state.saved_tenders.append(tender_data)
+        st.toast(f"Guardado: {code}")
 
-def render_tender_card(tender: Dict[str, Any], show_details: bool = False):
-    """Render a tender card with enhanced details"""
-    code = tender.get('CodigoExterno', 'N/A')
-    nombre = tender.get('Nombre', 'Sin título')
-    estado = tender.get('Estado', 'Desconocido')
-    
-    comprador = tender.get('Comprador', {})
-    org_name = comprador.get('NombreOrganismo', 'No especificado')
-    unit_name = comprador.get('NombreUnidad', '')
-    
-    fechas = tender.get('Fechas', {})
-    fecha_publicacion = format_date(fechas.get('FechaPublicacion'))
-    fecha_cierre = format_date(fechas.get('FechaCierre'))
-    
-    # Get categories
-    categories = categorize_tender(tender)
-    
-    # URLs
-    url_publica = f"https://www.mercadopublico.cl/ListadoLicitaciones/Pantallas/DirectorioLicitacion.aspx?idLicitacion={code}"
-    url_docs = f"https://www.mercadopublico.cl/Procurement/Modules/RFB/DetailsAcquisition.aspx?idLicitacion={code}&parent=1"
-    
-    # Card HTML
-    card_html = f"""
-    <div class="tender-card">
-        <div class="tender-header">
-            <span class="tender-code">{code}</span>
-            <span class="status-badge {get_status_class(estado)}">{estado}</span>
-        </div>
-        
-        <div class="tender-title">{nombre}</div>
-        <div class="tender-org">📍 {org_name}</div>
-        {f'<div class="tender-org" style="margin-top: 0.25rem;">🏢 {unit_name}</div>' if unit_name else ''}
-        
-        <div class="tender-meta">
-            <div class="meta-item">
-                <span class="meta-label">Publicación</span>
-                <span class="meta-value">📅 {fecha_publicacion}</span>
-            </div>
-            <div class="meta-item">
-                <span class="meta-label">Cierre</span>
-                <span class="meta-value">⏰ {fecha_cierre}</span>
-            </div>
-            <div class="meta-item">
-                <span class="meta-label">Tipo</span>
-                <span class="meta-value">{tender.get('Tipo', 'N/A')}</span>
-            </div>
-        </div>
-        
-        <div>
-            {''.join([f'<span class="category-tag">🏷️ {cat}</span>' for cat in categories])}
-        </div>
-        
-        <div class="action-buttons">
-            <a href="{url_publica}" target="_blank" class="btn-primary">
-                Ver Licitación 🔗
-            </a>
-            <a href="{url_docs}" target="_blank" class="btn-secondary">
-                Ver Documentos 📄
-            </a>
-        </div>
-    </div>
-    """
-    
-    st.markdown(card_html, unsafe_allow_html=True)
-    
-    # Show additional details if requested
-    if show_details:
-        with st.expander("🔍 Ver detalles adicionales"):
-            detail_data = fetch_tender_detail(code)
-            if detail_data:
-                st.json(detail_data)
+# --- API FETCHING ---
 
-def main():
-    # Header
-    st.markdown("""
-    <div class="header-container">
-        <div class="header-title">🏛️ Buscador de Licitaciones</div>
-        <div class="header-subtitle">Sistema de búsqueda inteligente para licitaciones públicas de Chile</div>
-    </div>
-    """, unsafe_allow_html=True)
+@st.cache_data(ttl=3600)
+def fetch_product_category_name(uri, product_code):
+    """Deep fetch: Navigates to the URI to get the real Category name."""
+    if not uri or "mercadopublico.cl" not in uri: return None
+    try:
+        r = requests.get(uri, timeout=3)
+        if r.status_code == 200:
+            data = r.json()
+            # Look for the product code match in the list
+            for prod in data.get('Productos', []):
+                if str(prod.get('CodigoProducto')) == str(product_code):
+                    return prod.get('NombreProducto')
+            # Fallback: Return the Category Name if product specific not found
+            return data.get('NombreCategoria')
+    except:
+        return None
+    return None
+
+@st.cache_data(ttl=1800, show_spinner=False)
+def fetch_daily_feed(ticket, days_back=3):
+    all_tenders = []
+    pbar = st.progress(0, text="Consultando MercadoPúblico...")
     
-    # Sidebar filters
-    with st.sidebar:
-        st.header("⚙️ Filtros de Búsqueda")
+    for i in range(days_back):
+        date_query = (datetime.now() - timedelta(days=i)).strftime("%d%m%Y")
+        url = "https://api.mercadopublico.cl/servicios/v1/publico/licitaciones.json"
         
-        # Date range
-        st.subheader("📅 Rango de Fechas")
-        days_back = st.slider("Días hacia atrás", 1, 90, 30)
+        try:
+            r = requests.get(url, params={'fecha': date_query, 'ticket': ticket}, timeout=8)
+            if r.status_code == 200:
+                data = r.json()
+                tenders = data.get("Listado", [])
+                
+                # Enrich with a default creation date if missing (for UI sorting)
+                fallback_date = (datetime.now() - timedelta(days=i)).strftime("%Y-%m-%dT09:00:00")
+                for t in tenders:
+                    if not t.get('FechaCreacion'):
+                        t['FechaCreacion'] = fallback_date
+                
+                all_tenders.extend(tenders)
+        except Exception:
+            pass
         
-        # Category filter
-        st.subheader("🏷️ Categorías")
-        selected_categories = st.multiselect(
-            "Seleccionar categorías",
-            options=list(CATEGORIES.keys()) + ["Todas"],
-            default=["Todas"]
-        )
+        pbar.progress((i + 1) / days_back)
         
-        # Custom keywords
-        st.subheader("🔑 Palabras Clave Personalizadas")
-        custom_keywords_input = st.text_area(
-            "Una por línea (opcional)",
-            placeholder="hormigón\nensayo\npavimento"
-        )
-        
-        # Estado filter
-        st.subheader("📊 Estado")
-        estados_filter = st.multiselect(
-            "Filtrar por estado",
-            options=["Todas", "Publicada", "Cerrada", "Adjudicada"],
-            default=["Todas"]
-        )
-        
-        # Search button
-        search_button = st.button("🔍 Buscar Licitaciones", type="primary", use_container_width=True)
+    pbar.empty()
+    return all_tenders
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def fetch_ocds_data(code):
+    url = f"https://api.mercadopublico.cl/APISOCDS/OCDS/record/{code}"
+    try:
+        r = requests.get(url, timeout=5)
+        if r.status_code == 200:
+            return r.json()
+    except:
+        pass
+    return None
+
+# --- MAIN APP UI ---
+
+with st.sidebar:
+    st.header("Configuración")
     
-    # Main content
-    if search_button:
-        with st.spinner("🔄 Buscando licitaciones..."):
-            # Parse custom keywords
-            custom_keywords = []
-            if custom_keywords_input.strip():
-                custom_keywords = [kw.strip().lower() for kw in custom_keywords_input.split('\n') if kw.strip()]
+    ticket_val = st.secrets.get("MP_TICKET", "")
+    if not ticket_val:
+        ticket_val = st.text_input("Ticket API", type="password")
+        if not ticket_val:
+            st.warning("Se requiere Ticket API")
+            st.stop()
             
-            # Get keywords based on selected categories
-            if "Todas" not in selected_categories and selected_categories:
-                category_keywords = []
-                for cat in selected_categories:
-                    if cat in CATEGORIES:
-                        category_keywords.extend(CATEGORIES[cat])
-                search_keywords = category_keywords + custom_keywords
-            else:
-                search_keywords = custom_keywords if custom_keywords else None
+    days_slider = st.slider("Días a revisar", 1, 7, 2)
+    search_query = st.text_input("Filtrar por texto")
+    
+    st.divider()
+    st.metric("Guardados", len(st.session_state.saved_tenders))
+
+st.title("Monitor de Licitaciones")
+tab1, tab2 = st.tabs(["📡 Feed en Vivo", "🔖 Mis Marcadores"])
+
+# --- TAB 1: FEED ---
+with tab1:
+    raw_list = fetch_daily_feed(ticket_val, days_slider)
+    
+    # Filter
+    filtered_list = []
+    terms = [x.strip().lower() for x in search_query.split(",")] if search_query else []
+    
+    for item in raw_list:
+        # Robust Data Extraction
+        buyer = item.get('Comprador') or {} # Handle None
+        if not isinstance(buyer, dict): buyer = {} # Handle weird API responses
+        
+        org_name = buyer.get('NombreOrganismo', 'Organismo Desconocido')
+        region_name = buyer.get('RegionUnidad', 'Región no especificada')
+        
+        # Text for searching
+        full_text = (str(item.get('Nombre')) + str(item.get('Descripcion')) + org_name).lower()
+        
+        # Categorization
+        cats = categorize_tender(full_text)
+        item['calculated_cats'] = cats # Store for display
+        item['clean_org'] = org_name
+        item['clean_region'] = region_name
+        
+        if terms:
+            if not any(term in full_text for term in terms):
+                continue
+        
+        filtered_list.append(item)
+        
+    st.caption(f"Mostrando {len(filtered_list)} licitaciones.")
+
+    if not filtered_list:
+        st.info("No hay resultados.")
+        
+    for tender in filtered_list:
+        code = tender.get('CodigoExterno')
+        is_saved = any(t['CodigoExterno'] == code for t in st.session_state.saved_tenders)
+        
+        # Formats
+        creation_human = get_relative_time(tender.get('FechaCreacion'))
+        
+        close_raw = tender.get('FechaCierre', '')
+        try:
+            close_human = datetime.strptime(close_raw, "%Y-%m-%dT%H:%M:%S").strftime("%d/%m/%Y %H:%M")
+        except:
+            close_human = "Sin fecha"
             
-            # Fetch tenders from API
-            all_tenders = []
-            today = datetime.now()
+        # Cat HTML
+        cat_html = " ".join([f"<span class='cat-tag'>{c}</span>" for c in tender.get('calculated_cats', [])])
+        
+        desc_short = textwrap.shorten(tender.get('Descripcion', ''), width=220, placeholder="...")
+
+        # --- THE FIX: No indentation in the f-string HTML ---
+        html_card = f"""
+<div class="tender-card">
+<div class="card-header-row">
+<div><span class="card-id">{code}</span> <span style="font-size:0.8rem; color:#6B7280; margin-left:8px;">{creation_human}</span></div>
+<div style="font-size:0.75rem; font-weight:700; color:#059669; background:#D1FAE5; padding:2px 8px; border-radius:12px;">{tender.get('Estado')}</div>
+</div>
+<div class="card-title">{tender.get('Nombre')}</div>
+<div style="margin-bottom:8px;">{cat_html}</div>
+<div style="font-size:0.9rem; color:#374151; margin-bottom:12px;">{desc_short}</div>
+<div class="meta-grid">
+<div class="meta-item"><span class="meta-icon">🏢</span> {tender['clean_org']}</div>
+<div class="meta-item"><span class="meta-icon">📍</span> {tender['clean_region']}</div>
+<div class="meta-item" style="color:#DC2626;"><span class="meta-icon">⏳</span> Cierre: {close_human}</div>
+</div>
+</div>
+"""
+        st.markdown(html_card, unsafe_allow_html=True)
+        
+        # Action Buttons
+        col1, col2, col3 = st.columns([1.2, 2, 7])
+        
+        btn_label = "✅ Guardado" if is_saved else "🔖 Guardar"
+        if col1.button(btn_label, key=f"btn_{code}"):
+            toggle_save_tender(tender)
+            st.rerun()
             
-            progress_bar = st.progress(0)
-            status_text = st.empty()
-            
-            for i in range(days_back):
-                current_date = today - timedelta(days=i)
-                date_str = current_date.strftime("%d%m%Y")
-                
-                status_text.text(f"Buscando en fecha: {current_date.strftime('%d/%m/%Y')}")
-                
-                try:
-                    # Note: Using public endpoint without ticket (limited functionality)
-                    # For production, you'd need to get a ticket from Mercado Público
-                    url = f"https://api.mercadopublico.cl/servicios/v1/publico/licitaciones.json?fecha={date_str}"
-                    
-                    response = requests.get(url, timeout=10)
-                    
-                    if response.status_code == 200:
-                        data = response.json()
-                        items = data.get('Listado', [])
+        col2.link_button("🌐 Ir a MP", f"http://www.mercadopublico.cl/fichaLicitacion.html?idLicitacion={code}")
+        
+        # Detail Expander with OCDS Logic
+        with st.expander("🔎 Ver Items y Detalle Técnico"):
+            with st.spinner("Consultando OCDS y Catálogo..."):
+                ocds = fetch_ocds_data(code)
+                if ocds:
+                    try:
+                        items = ocds['records'][0]['compiledRelease']['tender']['items']
+                        clean_items = []
                         
-                        # Filter relevant items
-                        for item in items:
-                            if is_relevant(item.get('Nombre', ''), search_keywords):
-                                # Apply status filter
-                                estado = item.get('Estado', '')
-                                if "Todas" in estados_filter or estado in estados_filter:
-                                    all_tenders.append(item)
-                    
-                    time.sleep(0.3)  # Rate limiting
-                    
-                except Exception as e:
-                    st.warning(f"Error en fecha {date_str}: {str(e)}")
-                
-                progress_bar.progress((i + 1) / days_back)
-            
-            progress_bar.empty()
-            status_text.empty()
-            
-            # Display results
-            if all_tenders:
-                # Stats
-                st.markdown(f"""
-                <div class="stats-container">
-                    <div class="stat-card">
-                        <div class="stat-value">{len(all_tenders)}</div>
-                        <div class="stat-label">Licitaciones Encontradas</div>
-                    </div>
-                    <div class="stat-card">
-                        <div class="stat-value">{days_back}</div>
-                        <div class="stat-label">Días Analizados</div>
-                    </div>
-                    <div class="stat-card">
-                        <div class="stat-value">{len([t for t in all_tenders if t.get('Estado') == 'Publicada'])}</div>
-                        <div class="stat-label">Activas</div>
-                    </div>
-                </div>
-                """, unsafe_allow_html=True)
-                
-                # Sort options
-                col1, col2 = st.columns([3, 1])
-                with col2:
-                    sort_by = st.selectbox(
-                        "Ordenar por",
-                        ["Fecha Publicación (Más reciente)", "Fecha Publicación (Más antigua)", "Código"]
-                    )
-                
-                # Sort tenders
-                if "Más reciente" in sort_by:
-                    all_tenders.sort(key=lambda x: x.get('Fechas', {}).get('FechaPublicacion', ''), reverse=True)
-                elif "Más antigua" in sort_by:
-                    all_tenders.sort(key=lambda x: x.get('Fechas', {}).get('FechaPublicacion', ''))
+                        for it in items:
+                            base_desc = it.get('description', '')
+                            classif = it.get('classification', {})
+                            unspsc = classif.get('id', '')
+                            uri = classif.get('uri', '')
+                            
+                            # Deep Fetch for Real Product Name
+                            real_name = base_desc
+                            if uri:
+                                fetched_name = fetch_product_category_name(uri, unspsc)
+                                if fetched_name:
+                                    real_name = f"{fetched_name} ({base_desc})"
+                                    
+                            clean_items.append({
+                                "Código UNSPSC": unspsc,
+                                "Producto/Servicio": real_name,
+                                "Cantidad": it.get('quantity', 0),
+                                "Unidad": it.get('unit', {}).get('name', '')
+                            })
+                            
+                        st.dataframe(pd.DataFrame(clean_items), use_container_width=True, hide_index=True)
+                    except:
+                        st.warning("Datos OCDS disponibles pero sin items estructurados.")
                 else:
-                    all_tenders.sort(key=lambda x: x.get('CodigoExterno', ''))
-                
-                # Display tenders
-                st.subheader(f"📋 Resultados ({len(all_tenders)} licitaciones)")
-                
-                for tender in all_tenders:
-                    render_tender_card(tender)
-                
-            else:
-                st.warning("⚠️ No se encontraron licitaciones con los criterios especificados.")
-                st.info("💡 Intenta ampliar el rango de fechas o ajustar las palabras clave.")
-    
-    else:
-        # Welcome message
-        st.info("""
-        👋 **Bienvenido al Buscador de Licitaciones**
-        
-        Este sistema te permite buscar licitaciones públicas de Chile de manera inteligente:
-        
-        - 🔍 **Búsqueda por palabras clave**: Filtra licitaciones relevantes para tu área
-        - 🏷️ **Categorización automática**: Organiza resultados por categorías
-        - 📊 **Visualización clara**: Información importante al alcance de un vistazo
-        - 🔗 **Acceso directo**: Enlaces a Mercado Público para más detalles
-        
-        **Para comenzar**, configura los filtros en el panel lateral y haz clic en "Buscar Licitaciones".
-        
-        ---
-        
-        ⚠️ **Nota**: Esta aplicación usa la API pública de Mercado Público. Para acceso completo,
-        necesitas registrar un ticket en [https://www.mercadopublico.cl](https://www.mercadopublico.cl)
-        """)
+                    st.error("Licitación antigua o sin datos abiertos (OCDS) disponibles.")
 
-if __name__ == "__main__":
-    main()
+# --- TAB 2: MARCADORES ---
+with tab2:
+    if not st.session_state.saved_tenders:
+        st.info("No has guardado licitaciones aún.")
+    else:
+        st.success(f"Tienes {len(st.session_state.saved_tenders)} licitaciones guardadas.")
+        
+        df_saved = pd.DataFrame(st.session_state.saved_tenders)
+        # Simple export button
+        csv = df_saved.to_csv(index=False).encode('utf-8')
+        st.download_button("📥 Descargar Excel/CSV", data=csv, file_name="licitaciones_guardadas.csv", mime="text/csv")
+        
+        for t in st.session_state.saved_tenders:
+            # Simple card for saved items
+            code_saved = t['CodigoExterno']
+            st.markdown(f"""
+            <div style="padding:16px; background:white; border:1px solid #E5E7EB; border-radius:8px; margin-bottom:10px;">
+                <div style="font-weight:bold; color:#111827;">{t.get('Nombre')}</div>
+                <div style="font-size:0.8rem; color:#6B7280; font-family:monospace;">{code_saved}</div>
+            </div>
+            """, unsafe_allow_html=True)
+            
+            if st.button("🗑️ Eliminar", key=f"del_{code_saved}"):
+                toggle_save_tender(t)
+                st.rerun()
+
 
