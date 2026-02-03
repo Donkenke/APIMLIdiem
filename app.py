@@ -17,8 +17,7 @@ st.set_page_config(page_title="Monitor de Licitaciones", page_icon="📊", layou
 BASE_URL = "https://api.mercadopublico.cl/servicios/v1/publico"
 DB_FILE = "licitaciones.db"
 
-# --- KEYWORD MAPPING (Generated from your Excel file) ---
-# Maps Keyword -> (Category, Sub-Specialty)
+# --- KEYWORD MAPPING (From your Excel) ---
 KEYWORD_MAPPING = {
   "Asesoría inspección": ("1. Inspección Técnica y Supervisión (Core)", "Siglas y Roles"),
   "AIF": ("1. Inspección Técnica y Supervisión (Core)", "Siglas y Roles"),
@@ -129,7 +128,6 @@ def init_db():
 def save_tender_to_db(tender_dict):
     try:
         data_to_save = tender_dict.copy()
-        # Clean up boolean columns used for UI before saving
         data_to_save.pop('Ver', None)
         data_to_save.pop('Guardar', None)
         
@@ -226,29 +224,37 @@ def parse_date(date_input):
         except ValueError:
             return None
 
+def safe_float(val):
+    """Safely converts value to float, defaulting to 0."""
+    try:
+        if val is None or val == "":
+            return 0.0
+        return float(val)
+    except Exception:
+        return 0.0
+
 def parse_tender_data(raw_tender):
     code = raw_tender.get('CodigoExterno', 'N/A')
     comprador = raw_tender.get('Comprador', {})
     fechas = raw_tender.get('Fechas', {})
     
+    # Updated URL format
+    link_url = f"https://www.mercadopublico.cl/Procurement/Modules/RFB/DetailsAcquisition.aspx?idLicitacion={code}"
+    
     return {
         "CodigoExterno": code,
-        "Link": f"https://www.mercadopublico.cl/ListadoLicitaciones/Pantallas/DirectorioLicitacion.aspx?idLicitacion={code}",
+        "Link": link_url,
         "Nombre": raw_tender.get('Nombre', 'Sin Nombre'),
         "Organismo": comprador.get('NombreOrganismo', 'N/A'),
         "Unidad": comprador.get('NombreUnidad', 'N/A'),
         "FechaPublicacion": parse_date(fechas.get('FechaPublicacion')),
         "FechaCierre": parse_date(fechas.get('FechaCierre')),
         "Estado": raw_tender.get('Estado', ''),
-        "MontoEstimado": float(raw_tender.get('MontoEstimado', 0)),
+        "MontoEstimado": safe_float(raw_tender.get('MontoEstimado')),
         "Descripcion": raw_tender.get('Descripcion', '')
     }
 
 def get_category_info(text):
-    """
-    Scans text for keywords in the mapping. 
-    Returns (Category, Sub-Specialty) of the FIRST match found, or ('Otros', 'Sin Clasificar').
-    """
     text_lower = text.lower()
     for keyword, (cat, sub) in KEYWORD_MAPPING.items():
         if keyword.lower() in text_lower:
@@ -318,7 +324,6 @@ def main():
                 cat, sub = get_category_info(full_text)
                 
                 if cat and is_date_valid(c_date):
-                    # Inject category info into the summary dict temporarily to pass it along
                     s['_cat'] = cat
                     s['_sub'] = sub
                     filtered_summaries.append(s)
@@ -332,7 +337,6 @@ def main():
                     detail = fetch_full_detail(code, ticket)
                     if detail:
                         parsed = parse_tender_data(detail)
-                        # Add the categories we found earlier
                         parsed['Categoría Estratégica'] = summary['_cat']
                         parsed['Sub-Especialidad'] = summary['_sub']
                         final_data.append(parsed)
@@ -350,17 +354,12 @@ def main():
         if "search_results" in st.session_state and not st.session_state.search_results.empty:
             df_results = st.session_state.search_results.copy()
             
-            # Add Interactive Columns
-            # "Web" will be the LinkColumn
-            # "Ver" will be the Selection Checkbox
-            # "Guardar" will be the Save Checkbox
-            
             if "Ver" not in df_results.columns:
                 df_results.insert(0, "Ver", False)
             if "Guardar" not in df_results.columns:
                 df_results.insert(1, "Guardar", False)
             
-            # We rename 'Link' column to 'Web' for the display
+            # Rename 'Link' column to 'Web' for display
             df_results["Web"] = df_results["Link"]
             
             # Column Order
@@ -370,14 +369,14 @@ def main():
                 "Nombre", "FechaPublicacion", "FechaCierre", "MontoEstimado"
             ]
 
-            st.info("💡 Usa la columna 'Ver' para revisar el detalle y 'Guardar' para almacenar.")
+            st.info("💡 Columna 'Web' abre MercadoPúblico. Columna 'Ver' abre el detalle aquí.")
 
             edited_df = st.data_editor(
                 df_results,
                 column_order=cols_order,
                 column_config={
                     "Web": st.column_config.LinkColumn(
-                        "Web", display_text="🔗", width="small", help="Ir a MercadoPúblico"
+                        "Web", display_text="🔗", width="small", help="Ir a MercadoPúblico (Externo)"
                     ),
                     "Ver": st.column_config.CheckboxColumn(
                         "Ver", width="small", help="Ver Detalle Interno"
@@ -392,10 +391,10 @@ def main():
                         "Nombre Licitación", width="large"
                     ),
                     "FechaPublicacion": st.column_config.DateColumn(
-                        "Publicado", format="D MMM YYYY"
+                        "Publicado", format="D MMM YYYY", width="medium"
                     ),
                     "FechaCierre": st.column_config.DateColumn(
-                        "Cierre", format="D MMM YYYY"
+                        "Cierre", format="D MMM YYYY", width="medium"
                     ),
                     "MontoEstimado": st.column_config.NumberColumn(
                         "Monto", format="$%d"
@@ -408,13 +407,12 @@ def main():
             )
 
             # --- HANDLE 'VER' SELECTION ---
-            # Check if any row has 'Ver' set to True
             tenders_to_explore = edited_df[edited_df["Ver"] == True]
             
             if not tenders_to_explore.empty:
                 st.session_state['selected_tender'] = tenders_to_explore.iloc[0].to_dict()
                 if len(tenders_to_explore) > 1:
-                    st.toast("⚠️ Se muestran detalles solo de la primera selección.", icon="ℹ️")
+                    st.toast("⚠️ Mostrando la primera selección.", icon="ℹ️")
             else:
                 if 'selected_tender' in st.session_state:
                      del st.session_state['selected_tender']
@@ -442,7 +440,6 @@ def main():
             st.header(row_data["Nombre"])
             st.caption(f"ID: {row_data['CodigoExterno']} | Estado: {row_data['Estado']}")
             
-            # Tags for Category
             st.markdown(f"**Categoría:** `{row_data.get('Categoría Estratégica', 'N/A')}`")
             st.markdown(f"**Especialidad:** `{row_data.get('Sub-Especialidad', 'N/A')}`")
 
@@ -452,7 +449,6 @@ def main():
             with d_col1:
                 st.metric("Organismo", row_data["Organismo"])
             with d_col2:
-                # Handle both datetime objects and strings
                 pub = row_data["FechaPublicacion"]
                 if isinstance(pub, str): pub = parse_date(pub)
                 st.metric("Fecha Publicación", pub.strftime("%d %b %Y") if pub else "N/A")
