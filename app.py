@@ -2,98 +2,148 @@ import streamlit as st
 import requests
 import pandas as pd
 import sqlite3
+import json
 from datetime import datetime, timedelta
 import textwrap
-import time
 
 # --- CONFIGURACIÓN DE PÁGINA ---
 st.set_page_config(layout="wide", page_title="Monitor de Licitaciones", page_icon="🏢")
 
-# --- DATABASE SETUP (PERSISTENCIA REAL) ---
-DB_FILE = "tenders_data.db"
+# --- DATABASE SETUP (PERSISTENCIA TOTAL) ---
+DB_FILE = "tenders_v2.db"
 
 def init_db():
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
-    # Tabla para tracking de estados por licitación
+    # Ahora guardamos el JSON completo para no depender de la API en la pestaña de guardados
     c.execute('''
-        CREATE TABLE IF NOT EXISTS tender_status (
+        CREATE TABLE IF NOT EXISTS tender_records (
             id TEXT PRIMARY KEY,
             visto BOOLEAN DEFAULT 0,
             guardado BOOLEAN DEFAULT 0,
-            first_seen_date TEXT
+            json_data TEXT,
+            updated_at TEXT
         )
     ''')
     conn.commit()
     conn.close()
 
-def get_status_dict(tender_ids):
-    """Obtiene el estado de múltiples IDs de una sola vez."""
+def get_db_status_map(ids_list):
+    """Obtiene estado Visto/Guardado para una lista de IDs."""
+    if not ids_list: return {}
     conn = sqlite3.connect(DB_FILE)
-    placeholders = ',' .join('?' for _ in tender_ids)
-    query = f"SELECT id, visto, guardado FROM tender_status WHERE id IN ({placeholders})"
-    df = pd.read_sql_query(query, conn, params=tuple(tender_ids))
-    conn.close()
-    
-    # Convertir a diccionario para búsqueda rápida
-    status_map = {}
-    if not df.empty:
-        for _, row in df.iterrows():
-            status_map[str(row['id'])] = {'visto': bool(row['visto']), 'guardado': bool(row['guardado'])}
-    return status_map
+    placeholders = ',' .join('?' for _ in ids_list)
+    query = f"SELECT id, visto, guardado FROM tender_records WHERE id IN ({placeholders})"
+    try:
+        df = pd.read_sql_query(query, conn, params=tuple(ids_list))
+        status_map = {}
+        if not df.empty:
+            for _, row in df.iterrows():
+                status_map[str(row['id'])] = {'visto': bool(row['visto']), 'guardado': bool(row['guardado'])}
+        return status_map
+    except:
+        return {}
+    finally:
+        conn.close()
 
-def update_status(tender_id, field, value):
-    """Actualiza Visto o Guardado en la BD."""
+def save_tender_interaction(tender_obj, action_type, value):
+    """
+    Guarda o Actualiza una licitación en la BD.
+    action_type: 'visto' o 'guardado'
+    value: True/False
+    """
+    t_id = tender_obj['CodigoExterno']
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
     
-    # Upsert logic (Insertar si no existe, actualizar si existe)
-    c.execute("SELECT id FROM tender_status WHERE id = ?", (tender_id,))
-    exists = c.fetchone()
+    # 1. Verificar si existe
+    c.execute("SELECT id, visto, guardado FROM tender_records WHERE id = ?", (t_id,))
+    row = c.fetchone()
     
-    if not exists:
-        today = datetime.now().strftime("%Y-%m-%d %H:%M")
-        c.execute("INSERT INTO tender_status (id, visto, guardado, first_seen_date) VALUES (?, 0, 0, ?)", (tender_id, today))
+    current_visto = row[1] if row else 0
+    current_guardado = row[2] if row else 0
     
-    query = f"UPDATE tender_status SET {field} = ? WHERE id = ?"
-    c.execute(query, (1 if value else 0, tender_id))
+    # 2. Determinar nuevos valores
+    new_visto = value if action_type == 'visto' else current_visto
+    new_guardado = value if action_type == 'guardado' else current_guardado
+    
+    # 3. Serializar JSON para persistencia offline
+    json_str = json.dumps(tender_obj, ensure_ascii=False)
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    
+    # 4. Upsert (Insert or Replace)
+    c.execute('''
+        INSERT OR REPLACE INTO tender_records (id, visto, guardado, json_data, updated_at)
+        VALUES (?, ?, ?, ?, ?)
+    ''', (t_id, new_visto, new_guardado, json_str, timestamp))
+    
     conn.commit()
     conn.close()
 
-# Inicializar DB al arranque
+def get_saved_tenders_from_db():
+    """Recupera TODA la data de los guardados directamente de la BD (Sin API)."""
+    conn = sqlite3.connect(DB_FILE)
+    try:
+        # Solo traemos los que tienen guardado = 1
+        df = pd.read_sql_query("SELECT json_data FROM tender_records WHERE guardado = 1 ORDER BY updated_at DESC", conn)
+        tenders = []
+        for _, row in df.iterrows():
+            if row['json_data']:
+                tenders.append(json.loads(row['json_data']))
+        return tenders
+    except Exception as e:
+        return []
+    finally:
+        conn.close()
+
+# Inicializar DB
 init_db()
 
-# --- ESTILOS CSS (Row Layout) ---
+# --- ESTILOS CSS (Row Layout Moderno) ---
 st.markdown("""
 <style>
     @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap');
     
-    .stApp { background-color: #F8F9FA; font-family: 'Inter', sans-serif; }
+    .stApp { background-color: #F3F4F6; font-family: 'Inter', sans-serif; color: #1F2937; }
     
-    /* Fila de Tabla Custom */
+    /* Fila de Tabla Estilizada */
     .tender-row {
         background-color: white;
         border: 1px solid #E5E7EB;
-        border-radius: 6px;
-        padding: 12px 16px;
-        margin-bottom: 8px;
-        display: flex;
-        align-items: center;
-        gap: 15px;
-        transition: background 0.2s;
+        border-radius: 8px;
+        padding: 14px 18px;
+        margin-bottom: 10px;
+        box-shadow: 0 1px 2px rgba(0,0,0,0.05);
+        transition: transform 0.1s;
     }
-    .tender-row:hover { background-color: #F9FAFB; border-color: #D1D5DB; }
     
-    .col-id { min-width: 100px; font-family: monospace; font-size: 0.8rem; color: #6B7280; }
-    .col-name { flex-grow: 1; font-weight: 600; color: #1F2937; font-size: 0.95rem; }
-    .col-org { width: 200px; font-size: 0.8rem; color: #4B5563; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-    .col-date { width: 120px; font-size: 0.8rem; color: #DC2626; text-align: right; }
+    /* Headers de la tabla */
+    .table-header {
+        display: flex;
+        padding: 0 18px;
+        margin-bottom: 8px;
+        font-size: 0.75rem;
+        font-weight: 700;
+        color: #6B7280;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+    }
     
-    /* Tags */
-    .tag-cat { font-size: 0.7rem; background: #EFF6FF; color: #2563EB; padding: 2px 6px; border-radius: 4px; margin-right: 4px; }
+    /* Tags de Categoría */
+    .cat-badge {
+        display: inline-block;
+        font-size: 0.7rem;
+        font-weight: 600;
+        color: #2563EB;
+        background-color: #EFF6FF;
+        padding: 2px 8px;
+        border-radius: 12px;
+        margin-right: 5px;
+        border: 1px solid #DBEAFE;
+    }
     
-    /* Botones invisibles en CSS, manejados por Streamlit */
-    .stButton button { border: none; background: transparent; padding: 0; }
+    /* Columnas Custom */
+    div[data-testid="column"] { align-items: center; display: flex; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -101,51 +151,45 @@ st.markdown("""
 CATEGORIES = {
     "Laboratorio": ["laboratorio", "ensayo", "hormigón", "suelo", "asfalto"],
     "Ingeniería": ["ingeniería", "cálculo", "diseño", "estructural", "consultoría"],
-    "ITO": ["ito", "inspección", "fiscalización", "supervisión"]
+    "ITO": ["ito", "inspección", "fiscalización", "supervisión"],
+    "Salud": ["salud", "hospital", "clínico", "médico"]
 }
 
-# --- FUNCIONES API ---
-
+# --- FUNCIONES API & UTILIDADES ---
 @st.cache_data(ttl=3600)
 def fetch_ocds_rich_data(code):
-    """Trae datos OCDS para el detalle técnico"""
-    url = f"https://api.mercadopublico.cl/APISOCDS/OCDS/record/{code}"
     try:
-        r = requests.get(url, timeout=3)
+        r = requests.get(f"https://api.mercadopublico.cl/APISOCDS/OCDS/record/{code}", timeout=3)
         return r.json() if r.status_code == 200 else None
-    except:
-        return None
+    except: return None
 
 @st.cache_data(ttl=3600)
 def fetch_product_category_name(uri, product_code):
-    """Obtiene nombre real del producto desde la URI"""
     if not uri or "mercadopublico" not in uri: return None
     try:
         r = requests.get(uri, timeout=3)
         if r.status_code == 200:
-            data = r.json()
-            for prod in data.get('Productos', []):
+            for prod in r.json().get('Productos', []):
                 if str(prod.get('CodigoProducto')) == str(product_code):
                     return prod.get('NombreProducto')
-            return data.get('NombreCategoria')
-    except:
-        return None
+            return r.json().get('NombreCategoria')
+    except: return None
 
 @st.cache_data(ttl=1800, show_spinner=False)
-def fetch_api_feed(ticket, days=3):
+def fetch_live_feed(ticket, days):
     tenders = []
-    pbar = st.progress(0, text="Cargando datos...")
+    pbar = st.progress(0, text="Sincronizando Feed...")
     for i in range(days):
         date_q = (datetime.now() - timedelta(days=i)).strftime("%d%m%Y")
-        url = "https://api.mercadopublico.cl/servicios/v1/publico/licitaciones.json"
         try:
-            r = requests.get(url, params={'fecha': date_q, 'ticket': ticket}, timeout=6)
+            r = requests.get("https://api.mercadopublico.cl/servicios/v1/publico/licitaciones.json", 
+                             params={'fecha': date_q, 'ticket': ticket}, timeout=6)
             if r.status_code == 200:
                 data = r.json().get("Listado", [])
-                # Agregar fecha fake si falta para ordenar
-                creation_fallback = (datetime.now() - timedelta(days=i)).strftime("%Y-%m-%dT09:00:00")
+                # Fix fechas
+                fallback = (datetime.now() - timedelta(days=i)).strftime("%Y-%m-%dT09:00:00")
                 for t in data:
-                    if not t.get('FechaCreacion'): t['FechaCreacion'] = creation_fallback
+                    if not t.get('FechaCreacion'): t['FechaCreacion'] = fallback
                 tenders.extend(data)
         except: pass
         pbar.progress((i+1)/days)
@@ -156,122 +200,74 @@ def categorize(text):
     text = text.lower()
     return [cat for cat, kws in CATEGORIES.items() if any(kw in text for kw in kws)]
 
-# --- INTERFAZ PRINCIPAL ---
+# --- UI PRINCIPAL ---
 
 with st.sidebar:
-    st.header("Configuración")
+    st.title("🎛️ Monitor")
     ticket = st.secrets.get("MP_TICKET") or st.text_input("API Ticket", type="password")
-    if not ticket: st.warning("Ingresa Ticket"); st.stop()
+    if not ticket: st.warning("🔒 Ticket requerido"); st.stop()
     
-    days = st.slider("Días", 1, 5, 2)
-    search = st.text_input("Filtrar texto")
-    
+    days_slider = st.slider("Ventana de tiempo", 1, 5, 2)
+    search_txt = st.text_input("Filtrar resultados")
     st.divider()
     
     # Exportar DB
-    conn = sqlite3.connect(DB_FILE)
-    df_db = pd.read_sql_query("SELECT * FROM tender_status WHERE guardado = 1", conn)
-    conn.close()
-    st.download_button("📥 Descargar Guardados (CSV)", df_db.to_csv(index=False), "guardados.csv")
+    if st.button("Descargar Base de Datos"):
+        with open(DB_FILE, "rb") as f:
+            st.download_button("📥 Bajar .db", f, file_name="tenders_full.db")
 
-st.title("Monitor de Licitaciones")
+st.title("Licitaciones 2026")
 
-# Tabs
-tab_all, tab_saved = st.tabs(["Listado General", "Solo Guardados"])
+# TABS
+tab_feed, tab_saved = st.tabs(["📡 Feed en Vivo", "⭐ Guardados (Persistente)"])
 
-def render_list(is_saved_view_only=False):
-    # 1. Obtener Datos API
-    if is_saved_view_only:
-        # Modo "Solo Guardados": Usamos la DB como fuente principal
-        conn = sqlite3.connect(DB_FILE)
-        saved_ids = pd.read_sql_query("SELECT id FROM tender_status WHERE guardado = 1", conn)['id'].tolist()
-        conn.close()
-        
-        # Como la API pública no permite buscar por ID masivo fácilmente sin loop,
-        # aquí hacemos un fetch general (cacheado) y filtramos.
-        # *Nota: En producción real, deberías guardar el JSON completo en la DB para no depender de la API histórica.*
-        raw_feed = fetch_api_feed(ticket, 7) # Buscamos 7 días atrás para intentar encontrar los guardados
-        filtered_feed = [t for t in raw_feed if t['CodigoExterno'] in saved_ids]
-    else:
-        # Modo General
-        filtered_feed = fetch_api_feed(ticket, days)
-
-    # 2. Obtener Estados de DB (Batch)
-    current_ids = [t['CodigoExterno'] for t in filtered_feed]
-    status_map = get_status_dict(current_ids)
+def render_table_row(tender, is_saved_view):
+    """Renderiza una fila única con lógica de columnas alineadas"""
+    t_id = tender['CodigoExterno']
     
-    # 3. Filtrar Texto (Frontend)
-    if search:
-        terms = [s.strip().lower() for s in search.split(",")]
-        filtered_feed = [t for t in filtered_feed if any(term in (str(t.get('Nombre'))+str(t.get('Descripcion'))).lower() for term in terms)]
+    # Recuperar estado actualizado de DB
+    status_map = get_db_status_map([t_id])
+    status = status_map.get(t_id, {'visto': False, 'guardado': False})
+    
+    # Auto-Check "Visto" en Feed
+    if not is_saved_view and not status['visto']:
+        save_tender_interaction(tender, 'visto', True)
+        status['visto'] = True
 
-    # 4. Render Grid Headers
-    if not filtered_feed:
-        st.info("No hay datos para mostrar.")
-        return
-
-    # Header de columnas simulado
-    st.markdown("""
-    <div style="display:flex; padding:0 16px; margin-bottom:8px; font-weight:bold; color:#6B7280; font-size:0.8rem;">
-        <div style="min-width:100px;">ID</div>
-        <div style="flex-grow:1;">LICITACIÓN</div>
-        <div style="width:200px;">ORGANISMO</div>
-        <div style="width:80px; text-align:center;">VISTO</div>
-        <div style="width:80px; text-align:center;">GUARDAR</div>
-        <div style="width:50px;"></div>
-    </div>
-    """, unsafe_allow_html=True)
-
-    for tender in filtered_feed:
-        t_id = tender['CodigoExterno']
-        
-        # Recuperar estado de DB o default
-        state = status_map.get(t_id, {'visto': False, 'guardado': False})
-        
-        # Marcar como Visto AUTOMÁTICAMENTE al renderizar (Si no estaba visto)
-        if not state['visto'] and not is_saved_view_only:
-            update_status(t_id, 'visto', True)
-            state['visto'] = True # Actualizar local para visualización actual
-
-        # Preparar datos visuales
-        org = tender.get('Comprador', {}).get('NombreOrganismo', 'N/A')
-        cats = categorize(str(tender.get('Nombre')) + str(tender.get('Descripcion')))
-        cats_html = "".join([f"<span class='tag-cat'>{c}</span>" for c in cats])
-        
-        # Iconos Estado
-        icon_visto = "👁️" if state['visto'] else "⚪"
-        icon_guardado = "⭐" if state['guardado'] else "☆"
-        btn_type = "primary" if state['guardado'] else "secondary"
-
-        # --- ROW LAYOUT ---
-        # Usamos columnas de Streamlit para alinear perfectamente los botones interactivos
-        c1, c2, c3, c4, c5, c6 = st.columns([1.5, 4, 2, 1, 1, 0.5])
+    # Preparar datos visuales
+    org_name = tender.get('Comprador', {}).get('NombreOrganismo', 'N/A')
+    cats = categorize(str(tender.get('Nombre')) + str(tender.get('Descripcion')))
+    cats_html = "".join([f"<span class='cat-badge'>{c}</span>" for c in cats])
+    
+    # Iconos
+    icon_eye = "👁️" if status['visto'] else "⚪"
+    icon_star = "⭐" if status['guardado'] else "☆"
+    
+    # --- LAYOUT DE FILA ---
+    # Contenedor visual blanco
+    with st.container():
+        # CSS Grid Layout simulado con columnas
+        c1, c2, c3, c4, c5, c6 = st.columns([1.2, 4, 2, 0.8, 0.8, 0.5])
         
         with c1:
-            st.markdown(f"<span style='font-family:monospace; font-size:0.8rem; color:#2563EB'>{t_id}</span>", unsafe_allow_html=True)
-            
+            st.markdown(f"<span style='font-family:monospace; color:#4B5563; font-size:0.8rem;'>{t_id}</span>", unsafe_allow_html=True)
         with c2:
-            st.markdown(f"<div style='font-weight:600; font-size:0.95rem; line-height:1.2'>{tender.get('Nombre')}</div>", unsafe_allow_html=True)
-            if cats_html: st.markdown(f"<div>{cats_html}</div>", unsafe_allow_html=True)
-            
+            st.markdown(f"<div style='font-weight:600; font-size:0.95rem; color:#111827; line-height:1.2; margin-bottom:4px;'>{tender.get('Nombre')}</div>", unsafe_allow_html=True)
+            if cats_html: st.markdown(cats_html, unsafe_allow_html=True)
         with c3:
-            st.markdown(f"<div style='font-size:0.8rem; color:#4B5563; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;'>{org}</div>", unsafe_allow_html=True)
-            
+            st.markdown(f"<div style='font-size:0.8rem; color:#6B7280; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;'>{org_name}</div>", unsafe_allow_html=True)
         with c4:
-            # Indicador Visual de Visto (No interactivo, solo informativo)
-            st.markdown(f"<div style='text-align:center; cursor:default;' title='Visto'>{icon_visto}</div>", unsafe_allow_html=True)
-            
+             st.markdown(f"<div style='text-align:center; opacity:0.7;' title='Visto'>{icon_eye}</div>", unsafe_allow_html=True)
         with c5:
-            # Botón Guardar (Toggle)
-            if st.button(icon_guardado, key=f"btn_save_{t_id}_{is_saved_view_only}", help="Guardar/Desguardar"):
-                new_val = not state['guardado']
-                update_status(t_id, 'guardado', new_val)
-                st.rerun()
-
+            # Botón Interactivo Guardar
+            if st.button(icon_star, key=f"s_{t_id}_{is_saved_view}", help="Guardar"):
+                new_val = not status['guardado']
+                save_tender_interaction(tender, 'guardado', new_val)
+                st.rerun() # Recarga inmediata para reflejar cambio
         with c6:
-             st.link_button("🔗", f"http://www.mercadopublico.cl/fichaLicitacion.html?idLicitacion={t_id}", help="Ir a ficha")
-
-        # Expander para detalles técnicos (OCDS)
+            st.link_button("🔗", f"http://www.mercadopublico.cl/fichaLicitacion.html?idLicitacion={t_id}")
+            
+        # Expander Técnico
         with st.expander("    Ver detalle técnico", expanded=False):
             with st.spinner("Cargando items..."):
                 ocds = fetch_ocds_rich_data(t_id)
@@ -281,25 +277,58 @@ def render_list(is_saved_view_only=False):
                         data_items = []
                         for it in items:
                             base_desc = it.get('description', '')
-                            # Deep Fetch logic
                             uri = it.get('classification', {}).get('uri')
                             code_prod = it.get('classification', {}).get('id')
                             if uri:
-                                real_name = fetch_product_category_name(uri, code_prod)
-                                if real_name: base_desc = f"({real_name}) {base_desc}"
-                            
-                            data_items.append({
-                                "Código": code_prod,
-                                "Descripción": base_desc,
-                                "Cant": it.get('quantity')
-                            })
+                                real = fetch_product_category_name(uri, code_prod)
+                                if real: base_desc = f"({real}) {base_desc}"
+                            data_items.append({"Código": code_prod, "Descripción": base_desc, "Cant": it.get('quantity')})
                         st.dataframe(pd.DataFrame(data_items), hide_index=True, use_container_width=True)
-                    except:
-                        st.warning("Sin items desglosados.")
+                    except: st.warning("Sin desglose.")
+        
+        st.markdown("<hr style='margin: 0 0 10px 0; border:0; border-top:1px solid #F3F4F6;'>", unsafe_allow_html=True)
 
-# Renderizar Vistas
-with tab_all:
-    render_list(is_saved_view_only=False)
 
+# --- TAB 1: FEED LOGIC ---
+with tab_feed:
+    tenders_feed = fetch_live_feed(ticket, days_slider)
+    
+    # Filter Text
+    if search_txt:
+        terms = [x.strip().lower() for x in search_txt.split(",")]
+        tenders_feed = [t for t in tenders_feed if any(term in (str(t.get('Nombre'))+str(t.get('Descripcion'))).lower() for term in terms)]
+
+    st.markdown("""
+    <div class="table-header">
+        <div style="width:12%;">ID</div>
+        <div style="width:40%;">Licitación</div>
+        <div style="width:20%;">Organismo</div>
+        <div style="width:8%; text-align:center;">Visto</div>
+        <div style="width:8%; text-align:center;">Guardar</div>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    if not tenders_feed: st.info("No hay datos recientes.")
+    for t in tenders_feed:
+        render_table_row(t, is_saved_view=False)
+
+# --- TAB 2: SAVED LOGIC ---
 with tab_saved:
-    render_list(is_saved_view_only=True)
+    # AQUÍ ESTÁ EL CAMBIO CLAVE: Leemos de la BD, no de la API
+    saved_tenders = get_saved_tenders_from_db()
+    
+    st.markdown("""
+    <div class="table-header">
+        <div style="width:12%;">ID</div>
+        <div style="width:40%;">Licitación (Guardada Localmente)</div>
+        <div style="width:20%;">Organismo</div>
+        <div style="width:8%; text-align:center;">Visto</div>
+        <div style="width:8%; text-align:center;">Eliminar</div>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    if not saved_tenders:
+        st.info("No hay licitaciones guardadas.")
+    
+    for t in saved_tenders:
+        render_table_row(t, is_saved_view=True)
