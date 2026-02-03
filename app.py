@@ -17,32 +17,96 @@ st.set_page_config(page_title="Monitor de Licitaciones", page_icon="📊", layou
 BASE_URL = "https://api.mercadopublico.cl/servicios/v1/publico"
 DB_FILE = "licitaciones.db"
 
-# KEYWORDS (from your file)
-SEARCH_KEYWORDS = [
-    "Asesoría inspección", "AIF", "AIT", "ATIF", "ATOD", "AFOS", "ATO", "ITO",
-    "Estudio Ingeniería", "Estructural", "Mecánica Suelos", "Geológico", "Geotécnico",
-    "Topográfico", "Topografía", "Aeródromo", "Aeropuerto", "Aeroportuario",
-    "Aerofotogrametría", "Aerofotogramétrico", "Levantamiento", "Energética",
-    "Diseño Cesfam", "Rehabilitación Cesfam", "Túnel", "Patrimonio", "Monumento Histórico",
-    "Obras de Emergencia", "Levantamiento crítico", "Hidrogeológico", "Prefactibilidad",
-    "Plan Inversional", "Huella Carbono", "Cambio climático", "PACC", "PCC",
-    "Sustentabilidad", "Sustentable", "Ruido Acústico", "Ruido Ambiental",
-    "Gases Efecto Invernadero", "Incendio Fuego", "Riesgo", "Levantamiento Catastro",
-    "Estudio Demanda", "Reclamaciones", "Revisión Contratos Obras",
-    "Revisión Contratos Operación", "Auditoría Forense", "Revisión Ofertas",
-    "Revisión Bases", "Análisis Costo", "Pérdida de productividad", "Peritajes Forenses",
-    "Ingeniería Conceptual", "Estudio Vibraciones", "Evaluación Estructural",
-    "Monitoreo y Levantamiento de Condiciones Existentes", "Riego", "Estudio Básico",
-    "Riles", "Aguas Servidas", "Supervisión Construcción Pozos",
-    "Actualización de la Estrategia Climática Nacional", "Actualización del NDC",
-    "Metodología de cálculo de huella de carbono", "Estudio de cabida",
-    "Estudio de Accesibilidad Universal", "Elaboración Anteproyecto", "Arquitectura",
-    "Ministerio de Educación", "Mineduc", "Dirección Educación Pública",
-    "Servicios Locales Educacionales", "Superintendencia de Infraestructura",
-    "Dirección de Arquitectura", "Ministerio de Vivienda", "Servicio de Vivienda",
-    "Metropolitana", "Regional", "Ministerio de Salud", "Minvu", "Serviu",
-    "Servicio de Salud", "Vialidad", "Ensayos"
-]
+# --- KEYWORD MAPPING (Generated from your Excel file) ---
+# Maps Keyword -> (Category, Sub-Specialty)
+KEYWORD_MAPPING = {
+  "Asesoría inspección": ("1. Inspección Técnica y Supervisión (Core)", "Siglas y Roles"),
+  "AIF": ("1. Inspección Técnica y Supervisión (Core)", "Siglas y Roles"),
+  "AIT": ("1. Inspección Técnica y Supervisión (Core)", "Siglas y Roles"),
+  "ATIF": ("1. Inspección Técnica y Supervisión (Core)", "Siglas y Roles"),
+  "ATOD": ("1. Inspección Técnica y Supervisión (Core)", "Siglas y Roles"),
+  "AFOS": ("1. Inspección Técnica y Supervisión (Core)", "Siglas y Roles"),
+  "ATO": ("1. Inspección Técnica y Supervisión (Core)", "Siglas y Roles"),
+  "ITO": ("1. Inspección Técnica y Supervisión (Core)", "Siglas y Roles"),
+  "Supervisión Construcción Pozos": ("1. Inspección Técnica y Supervisión (Core)", "Supervisión Específica"),
+  "Estudio Ingeniería": ("2. Ingeniería, Geotecnia y Laboratorio", "Ingeniería y Estructuras"),
+  "Estructural": ("2. Ingeniería, Geotecnia y Laboratorio", "Ingeniería y Estructuras"),
+  "Ingeniería Conceptual": ("2. Ingeniería, Geotecnia y Laboratorio", "Ingeniería y Estructuras"),
+  "Evaluación Estructural": ("2. Ingeniería, Geotecnia y Laboratorio", "Ingeniería y Estructuras"),
+  "Mecánica Suelos": ("2. Ingeniería, Geotecnia y Laboratorio", "Geotecnia y Suelos"),
+  "Geológico": ("2. Ingeniería, Geotecnia y Laboratorio", "Geotecnia y Suelos"),
+  "Geotécnico": ("2. Ingeniería, Geotecnia y Laboratorio", "Geotecnia y Suelos"),
+  "Hidrogeológico": ("2. Ingeniería, Geotecnia y Laboratorio", "Geotecnia y Suelos"),
+  "Ensayos": ("2. Ingeniería, Geotecnia y Laboratorio", "Laboratorio"),
+  "Topográfico": ("3. Topografía y Levantamientos", "Mediciones y Catastro"),
+  "Topografía": ("3. Topografía y Levantamientos", "Mediciones y Catastro"),
+  "Levantamiento": ("3. Topografía y Levantamientos", "Mediciones y Catastro"),
+  "Levantamiento Catastro": ("3. Topografía y Levantamientos", "Mediciones y Catastro"),
+  "Monitoreo y Levantamiento de Condiciones Existentes": ("3. Topografía y Levantamientos", "Mediciones y Catastro"),
+  "Aerofotogrametría": ("3. Topografía y Levantamientos", "Aéreo / Crítico"),
+  "Aerofotogramétrico": ("3. Topografía y Levantamientos", "Aéreo / Crítico"),
+  "Levantamiento crítico": ("3. Topografía y Levantamientos", "Aéreo / Crítico"),
+  "Huella Carbono": ("4. Sustentabilidad y Medio Ambiente", "Cambio Climático y Huella"),
+  "Cambio climático": ("4. Sustentabilidad y Medio Ambiente", "Cambio Climático y Huella"),
+  "PACC": ("4. Sustentabilidad y Medio Ambiente", "Cambio Climático y Huella"),
+  "PCC": ("4. Sustentabilidad y Medio Ambiente", "Cambio Climático y Huella"),
+  "Gases Efecto Invernadero": ("4. Sustentabilidad y Medio Ambiente", "Cambio Climático y Huella"),
+  "Actualización de la Estrategia Climática Nacional": ("4. Sustentabilidad y Medio Ambiente", "Cambio Climático y Huella"),
+  "Actualización del NDC": ("4. Sustentabilidad y Medio Ambiente", "Cambio Climático y Huella"),
+  "Metodología de cálculo de huella de carbono": ("4. Sustentabilidad y Medio Ambiente", "Cambio Climático y Huella"),
+  "Energética": ("4. Sustentabilidad y Medio Ambiente", "Eficiencia y Ambiente"),
+  "Sustentabilidad": ("4. Sustentabilidad y Medio Ambiente", "Eficiencia y Ambiente"),
+  "Sustentable": ("4. Sustentabilidad y Medio Ambiente", "Eficiencia y Ambiente"),
+  "Ruido Acústico": ("4. Sustentabilidad y Medio Ambiente", "Eficiencia y Ambiente"),
+  "Ruido Ambiental": ("4. Sustentabilidad y Medio Ambiente", "Eficiencia y Ambiente"),
+  "Riles": ("4. Sustentabilidad y Medio Ambiente", "Aguas y Residuos"),
+  "Aguas Servidas": ("4. Sustentabilidad y Medio Ambiente", "Aguas y Residuos"),
+  "Reclamaciones": ("5. Gestión de Contratos y Forense (Claims)", "Gestión Contractual"),
+  "Revisión Contratos Obras": ("5. Gestión de Contratos y Forense (Claims)", "Gestión Contractual"),
+  "Revisión Contratos Operación": ("5. Gestión de Contratos y Forense (Claims)", "Gestión Contractual"),
+  "Revisión Ofertas": ("5. Gestión de Contratos y Forense (Claims)", "Gestión Contractual"),
+  "Revisión Bases": ("5. Gestión de Contratos y Forense (Claims)", "Gestión Contractual"),
+  "Auditoría Forense": ("5. Gestión de Contratos y Forense (Claims)", "Peritajes y Análisis"),
+  "Análisis Costo": ("5. Gestión de Contratos y Forense (Claims)", "Peritajes y Análisis"),
+  "Pérdida de productividad": ("5. Gestión de Contratos y Forense (Claims)", "Peritajes y Análisis"),
+  "Peritajes Forenses": ("5. Gestión de Contratos y Forense (Claims)", "Peritajes y Análisis"),
+  "Incendio Fuego": ("5. Gestión de Contratos y Forense (Claims)", "Riesgos y Vibraciones"),
+  "Riesgo": ("5. Gestión de Contratos y Forense (Claims)", "Riesgos y Vibraciones"),
+  "Estudio Vibraciones": ("5. Gestión de Contratos y Forense (Claims)", "Riesgos y Vibraciones"),
+  "Arquitectura": ("6. Arquitectura y Edificación", "Diseño y Anteproyectos"),
+  "Elaboración Anteproyecto": ("6. Arquitectura y Edificación", "Diseño y Anteproyectos"),
+  "Estudio de cabida": ("6. Arquitectura y Edificación", "Diseño y Anteproyectos"),
+  "Estudio de Accesibilidad Universal": ("6. Arquitectura y Edificación", "Diseño y Anteproyectos"),
+  "Patrimonio": ("6. Arquitectura y Edificación", "Patrimonio"),
+  "Monumento Histórico": ("6. Arquitectura y Edificación", "Patrimonio"),
+  "Diseño Cesfam": ("6. Arquitectura y Edificación", "Salud (CESFAM)"),
+  "Rehabilitación Cesfam": ("6. Arquitectura y Edificación", "Salud (CESFAM)"),
+  "Aeródromo": ("7. Infraestructura y Estudios Básicos", "Transporte"),
+  "Aeropuerto": ("7. Infraestructura y Estudios Básicos", "Transporte"),
+  "Aeroportuario": ("7. Infraestructura y Estudios Básicos", "Transporte"),
+  "Túnel": ("7. Infraestructura y Estudios Básicos", "Transporte"),
+  "Vialidad": ("7. Infraestructura y Estudios Básicos", "Transporte"),
+  "Prefactibilidad": ("7. Infraestructura y Estudios Básicos", "Estudios de Inversión"),
+  "Plan Inversional": ("7. Infraestructura y Estudios Básicos", "Estudios de Inversión"),
+  "Estudio Demanda": ("7. Infraestructura y Estudios Básicos", "Estudios de Inversión"),
+  "Estudio Básico": ("7. Infraestructura y Estudios Básicos", "Estudios de Inversión"),
+  "Obras de Emergencia": ("7. Infraestructura y Estudios Básicos", "Otros"),
+  "Riego": ("7. Infraestructura y Estudios Básicos", "Otros"),
+  "Ministerio de Vivienda": ("8. Mandantes Clave (Organismos Públicos)", "Vivienda (MINVU)"),
+  "Minvu": ("8. Mandantes Clave (Organismos Públicos)", "Vivienda (MINVU)"),
+  "Servicio de Vivienda": ("8. Mandantes Clave (Organismos Públicos)", "Vivienda (MINVU)"),
+  "Serviu": ("8. Mandantes Clave (Organismos Públicos)", "Vivienda (MINVU)"),
+  "Ministerio de Educación": ("8. Mandantes Clave (Organismos Públicos)", "Educación (MINEDUC)"),
+  "Mineduc": ("8. Mandantes Clave (Organismos Públicos)", "Educación (MINEDUC)"),
+  "Dirección Educación Pública": ("8. Mandantes Clave (Organismos Públicos)", "Educación (MINEDUC)"),
+  "Servicios Locales Educacionales": ("8. Mandantes Clave (Organismos Públicos)", "Educación (MINEDUC)"),
+  "Ministerio de Salud": ("8. Mandantes Clave (Organismos Públicos)", "Salud (MINSAL)"),
+  "Servicio de Salud": ("8. Mandantes Clave (Organismos Públicos)", "Salud (MINSAL)"),
+  "Dirección de Arquitectura": ("8. Mandantes Clave (Organismos Públicos)", "Obras Públicas (MOP)"),
+  "Superintendencia de Infraestructura": ("8. Mandantes Clave (Organismos Públicos)", "Obras Públicas (MOP)"),
+  "Metropolitana": ("8. Mandantes Clave (Organismos Públicos)", "Alcance Geográfico"),
+  "Regional": ("8. Mandantes Clave (Organismos Públicos)", "Alcance Geográfico")
+}
 
 # --- DATABASE FUNCTIONS ---
 def init_db():
@@ -66,7 +130,7 @@ def save_tender_to_db(tender_dict):
     try:
         data_to_save = tender_dict.copy()
         # Clean up boolean columns used for UI before saving
-        data_to_save.pop('Explorar', None)
+        data_to_save.pop('Ver', None)
         data_to_save.pop('Guardar', None)
         
         if isinstance(data_to_save.get('FechaCierre'), pd.Timestamp):
@@ -180,9 +244,16 @@ def parse_tender_data(raw_tender):
         "Descripcion": raw_tender.get('Descripcion', '')
     }
 
-def is_relevant(text):
+def get_category_info(text):
+    """
+    Scans text for keywords in the mapping. 
+    Returns (Category, Sub-Specialty) of the FIRST match found, or ('Otros', 'Sin Clasificar').
+    """
     text_lower = text.lower()
-    return any(kw.lower() in text_lower for kw in SEARCH_KEYWORDS)
+    for keyword, (cat, sub) in KEYWORD_MAPPING.items():
+        if keyword.lower() in text_lower:
+            return cat, sub
+    return None, None
 
 def is_date_valid(date_obj):
     if not date_obj:
@@ -222,7 +293,7 @@ def main():
     with col3:
          st.write("")
          st.write("")
-         st.caption(f"Filtro: {len(SEARCH_KEYWORDS)} palabras clave.")
+         st.caption(f"Filtro activo: {len(KEYWORD_MAPPING)} palabras clave.")
 
     # --- TABS ---
     tab_search, tab_detail, tab_saved = st.tabs(["🔍 Resultados", "📄 Detalle", "💾 Marcadores"])
@@ -239,13 +310,20 @@ def main():
             summaries = fetch_summaries_for_range(start_d, end_d, ticket)
             filtered_summaries = []
             
+            # Phase 1: Filter & Categorize
             for s in summaries:
                 full_text = f"{s.get('Nombre', '')} {s.get('Descripcion', '')}"
                 c_date = parse_date(s.get('FechaCierre'))
                 
-                if is_relevant(full_text) and is_date_valid(c_date):
+                cat, sub = get_category_info(full_text)
+                
+                if cat and is_date_valid(c_date):
+                    # Inject category info into the summary dict temporarily to pass it along
+                    s['_cat'] = cat
+                    s['_sub'] = sub
                     filtered_summaries.append(s)
             
+            # Phase 2: Details
             final_data = []
             if filtered_summaries:
                 prog = st.progress(0)
@@ -253,11 +331,16 @@ def main():
                     code = summary.get('CodigoExterno')
                     detail = fetch_full_detail(code, ticket)
                     if detail:
-                        final_data.append(parse_tender_data(detail))
+                        parsed = parse_tender_data(detail)
+                        # Add the categories we found earlier
+                        parsed['Categoría Estratégica'] = summary['_cat']
+                        parsed['Sub-Especialidad'] = summary['_sub']
+                        final_data.append(parsed)
                     prog.progress((idx + 1) / len(filtered_summaries))
                 prog.empty()
             
             df = pd.DataFrame(final_data)
+            # Default Sort: Publicacion Descending
             if not df.empty:
                 df = df.sort_values(by="FechaPublicacion", ascending=False)
             st.session_state.search_results = df
@@ -268,31 +351,43 @@ def main():
             df_results = st.session_state.search_results.copy()
             
             # Add Interactive Columns
-            # We add "Explorar" for details and "Guardar" for database
-            if "Explorar" not in df_results.columns:
-                df_results.insert(0, "Explorar", False)
+            # "Web" will be the LinkColumn
+            # "Ver" will be the Selection Checkbox
+            # "Guardar" will be the Save Checkbox
+            
+            if "Ver" not in df_results.columns:
+                df_results.insert(0, "Ver", False)
             if "Guardar" not in df_results.columns:
                 df_results.insert(1, "Guardar", False)
+            
+            # We rename 'Link' column to 'Web' for the display
+            df_results["Web"] = df_results["Link"]
+            
+            # Column Order
+            cols_order = [
+                "Web", "Ver", "Guardar", "CodigoExterno", 
+                "Categoría Estratégica", "Sub-Especialidad",
+                "Nombre", "FechaPublicacion", "FechaCierre", "MontoEstimado"
+            ]
 
-            # Reorder columns: Explorar, Guardar, Codigo, Link, Nombre...
-            cols_order = ["Explorar", "Guardar", "CodigoExterno", "Link", "Nombre", "Organismo", "FechaPublicacion", "FechaCierre", "MontoEstimado"]
-
-            st.info("💡 Marca la casilla 'Explorar' para ver detalles, o 'Guardar' para almacenarla.")
+            st.info("💡 Usa la columna 'Ver' para revisar el detalle y 'Guardar' para almacenar.")
 
             edited_df = st.data_editor(
                 df_results,
                 column_order=cols_order,
                 column_config={
-                    "Explorar": st.column_config.CheckboxColumn(
-                        "👁️", width="small", help="Ver Detalle"
+                    "Web": st.column_config.LinkColumn(
+                        "Web", display_text="🔗", width="small", help="Ir a MercadoPúblico"
+                    ),
+                    "Ver": st.column_config.CheckboxColumn(
+                        "Ver", width="small", help="Ver Detalle Interno"
                     ),
                     "Guardar": st.column_config.CheckboxColumn(
                         "💾", width="small", help="Guardar en DB"
                     ),
-                    "CodigoExterno": st.column_config.TextColumn("ID", width="medium"),
-                    "Link": st.column_config.LinkColumn(
-                        "Web", display_text="🔗", width="small"
-                    ),
+                    "CodigoExterno": st.column_config.TextColumn("ID", width="small"),
+                    "Categoría Estratégica": st.column_config.TextColumn("Categoría", width="medium"),
+                    "Sub-Especialidad": st.column_config.TextColumn("Especialidad", width="medium"),
                     "Nombre": st.column_config.TextColumn(
                         "Nombre Licitación", width="large"
                     ),
@@ -303,26 +398,24 @@ def main():
                         "Cierre", format="D MMM YYYY"
                     ),
                     "MontoEstimado": st.column_config.NumberColumn(
-                        "Monto ($)", format="$%d"
+                        "Monto", format="$%d"
                     )
                 },
-                disabled=["CodigoExterno", "Link", "Nombre", "Organismo", "FechaPublicacion", "FechaCierre", "MontoEstimado"],
+                disabled=["CodigoExterno", "Web", "Nombre", "Categoría Estratégica", "Sub-Especialidad", "FechaPublicacion", "FechaCierre", "MontoEstimado"],
                 hide_index=True,
                 use_container_width=True,
-                height=800  # Increased Height
+                height=800
             )
 
-            # --- HANDLE EXPLORAR SELECTION ---
-            # Check if any row has 'Explorar' set to True
-            tenders_to_explore = edited_df[edited_df["Explorar"] == True]
+            # --- HANDLE 'VER' SELECTION ---
+            # Check if any row has 'Ver' set to True
+            tenders_to_explore = edited_df[edited_df["Ver"] == True]
             
             if not tenders_to_explore.empty:
-                # We take the first one selected to avoid conflicts
                 st.session_state['selected_tender'] = tenders_to_explore.iloc[0].to_dict()
                 if len(tenders_to_explore) > 1:
                     st.toast("⚠️ Se muestran detalles solo de la primera selección.", icon="ℹ️")
             else:
-                # Clear selection if unchecked
                 if 'selected_tender' in st.session_state:
                      del st.session_state['selected_tender']
 
@@ -349,11 +442,17 @@ def main():
             st.header(row_data["Nombre"])
             st.caption(f"ID: {row_data['CodigoExterno']} | Estado: {row_data['Estado']}")
             
+            # Tags for Category
+            st.markdown(f"**Categoría:** `{row_data.get('Categoría Estratégica', 'N/A')}`")
+            st.markdown(f"**Especialidad:** `{row_data.get('Sub-Especialidad', 'N/A')}`")
+
+            st.divider()
+
             d_col1, d_col2, d_col3 = st.columns(3)
             with d_col1:
                 st.metric("Organismo", row_data["Organismo"])
             with d_col2:
-                # Handle both datetime objects and strings if they got converted
+                # Handle both datetime objects and strings
                 pub = row_data["FechaPublicacion"]
                 if isinstance(pub, str): pub = parse_date(pub)
                 st.metric("Fecha Publicación", pub.strftime("%d %b %Y") if pub else "N/A")
@@ -367,9 +466,9 @@ def main():
             st.write(row_data["Descripcion"])
             
             st.divider()
-            st.markdown(f"[**🔗 Ver Ficha en MercadoPúblico**]({row_data['Link']})")
+            st.markdown(f"[**🔗 Ver Ficha Oficial en MercadoPúblico**]({row_data['Link']})")
         else:
-            st.info("👈 Marca la casilla '👁️' (Explorar) en la tabla de Resultados para ver el detalle aquí.")
+            st.info("👈 Marca la casilla 'Ver' en la tabla de Resultados para ver el detalle aquí.")
 
     # --- TAB 3: SAVED ---
     with tab_saved:
