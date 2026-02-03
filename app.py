@@ -68,32 +68,218 @@ st.markdown("""
 <style>
     @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap');
     
-    .stApp { background-color: #F8F9FA; font-family: 'Inter', sans-serif; }
+    .stApp { 
+        background-color: #F8F9FA; 
+        font-family: 'Inter', sans-serif; 
+    }
+    
+    /* Header Styles */
+    header { 
+        background-color: white; 
+        box-shadow: 0 2px 4px rgba(0,0,0,0.05); 
+        padding: 1rem 0;
+        border-bottom: 1px solid #E5E7EB;
+    }
+    
+    /* Sidebar Styling */
+    .css-1d391kg {
+        background-color: #FFFFFF;
+        border-right: 1px solid #E5E7EB;
+    }
+    
+    /* Professional Container Styling */
+    .main-container {
+        max-width: 100%;
+        padding: 0 1rem;
+    }
     
     /* Fila de Tabla Custom */
     .tender-row {
         background-color: white;
         border: 1px solid #E5E7EB;
-        border-radius: 6px;
-        padding: 12px 16px;
-        margin-bottom: 8px;
+        border-radius: 8px;
+        padding: 16px 20px;
+        margin-bottom: 12px;
         display: flex;
         align-items: center;
         gap: 15px;
-        transition: background 0.2s;
+        transition: all 0.2s ease;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.05);
     }
-    .tender-row:hover { background-color: #F9FAFB; border-color: #D1D5DB; }
+    .tender-row:hover { 
+        background-color: #F9FAFB; 
+        border-color: #D1D5DB; 
+        transform: translateY(-1px);
+        box-shadow: 0 2px 6px rgba(0,0,0,0.08);
+    }
     
-    .col-id { min-width: 100px; font-family: monospace; font-size: 0.8rem; color: #6B7280; }
-    .col-name { flex-grow: 1; font-weight: 600; color: #1F2937; font-size: 0.95rem; }
-    .col-org { width: 200px; font-size: 0.8rem; color: #4B5563; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-    .col-date { width: 120px; font-size: 0.8rem; color: #DC2626; text-align: right; }
+    .col-id { 
+        min-width: 120px; 
+        font-family: monospace; 
+        font-size: 0.85rem; 
+        color: #4B5563; 
+        font-weight: 500;
+    }
+    .col-name { 
+        flex-grow: 1; 
+        font-weight: 600; 
+        color: #1F2937; 
+        font-size: 1rem; 
+        line-height: 1.4;
+    }
+    .col-org { 
+        width: 220px; 
+        font-size: 0.85rem; 
+        color: #4B5563; 
+        white-space: nowrap; 
+        overflow: hidden; 
+        text-overflow: ellipsis; 
+    }
+    .col-date { 
+        width: 140px; 
+        font-size: 0.85rem; 
+        color: #DC2626; 
+        text-align: right; 
+        font-weight: 500;
+    }
     
-    /* Tags */
-    .tag-cat { font-size: 0.7rem; background: #EFF6FF; color: #2563EB; padding: 2px 6px; border-radius: 4px; margin-right: 4px; }
+    /* Professional Tag Styling */
+    .tag-cat { 
+        font-size: 0.75rem; 
+        background: linear-gradient(135deg, #dbeafe, #bfdbfe); 
+        color: #1d4ed8; 
+        padding: 3px 8px; 
+        border-radius: 20px; 
+        margin-right: 6px; 
+        display: inline-block;
+        border: 1px solid #93c5fd;
+    }
     
-    /* Botones invisibles en CSS, manejados por Streamlit */
-    .stButton button { border: none; background: transparent; padding: 0; }
+    /* Professional Button Styling */
+    .stButton>button {
+        border: 1px solid #D1D5DB !important;
+        border-radius: 6px !important;
+        padding: 6px 12px !important;
+        background-color: white !important;
+        color: #4B5563 !important;
+        font-weight: 500 !important;
+        transition: all 0.2s ease !important;
+        box-shadow: 0 1px 2px rgba(0,0,0,0.05) !important;
+    }
+    
+    .stButton>button:hover {
+        background-color: #F3F4F6 !important;
+        border-color: #9CA3AF !important;
+        transform: translateY(-1px) !important;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.1) !important;
+    }
+    
+    .stButton>button:active {
+        transform: translateY(0) !important;
+    }
+    
+    /* Special styling for starred buttons */
+    .star-button {
+        font-size: 1.2rem !important;
+        padding: 4px !important;
+        min-width: 36px !important;
+    }
+    
+    /* Link button styling */
+    .stLinkButton>button {
+        border: 1px solid #D1D5DB !important;
+        border-radius: 6px !important;
+        padding: 6px 12px !important;
+        background-color: white !important;
+        color: #4B5563 !important;
+        font-weight: 500 !important;
+        transition: all 0.2s ease !important;
+        box-shadow: 0 1px 2px rgba(0,0,0,0.05) !important;
+        text-decoration: none !important;
+    }
+    
+    /* Expander styling */
+    .streamlit-expander {
+        border: 1px solid #E5E7EB !important;
+        border-radius: 8px !important;
+        margin: 10px 0 !important;
+    }
+    
+    .streamlit-expanderHeader {
+        background-color: #F9FAFB !important;
+        border-radius: 7px 7px 0 0 !important;
+        padding: 10px 15px !important;
+        font-weight: 500 !important;
+    }
+    
+    /* Professional table styling */
+    .dataframe {
+        border: 1px solid #E5E7EB !important;
+        border-radius: 8px !important;
+        overflow: hidden !important;
+    }
+    
+    /* Tabs styling */
+    .stTabs [data-baseweb="tab-list"] {
+        gap: 24px;
+    }
+    
+    .stTabs [data-baseweb="tab"] {
+        padding: 12px 24px !important;
+        font-weight: 600 !important;
+        color: #4B5563 !important;
+        border-bottom: 3px solid transparent !important;
+    }
+    
+    .stTabs [data-baseweb="tab"]:hover {
+        color: #1F2937 !important;
+        border-bottom: 3px solid #D1D5DB !important;
+    }
+    
+    .stTabs [data-baseweb="tab"][aria-selected="true"] {
+        color: #2563EB !important;
+        border-bottom: 3px solid #2563EB !important;
+    }
+    
+    /* Status indicator styling */
+    .status-indicator {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 24px;
+        height: 24px;
+        border-radius: 50%;
+        background-color: #F3F4F6;
+        font-size: 0.8rem;
+    }
+    
+    .status-seen {
+        background-color: #dbeafe;
+        color: #1d4ed8;
+    }
+    
+    .status-saved {
+        background-color: #fef3c7;
+        color: #d97706;
+    }
+    
+    /* Header alignment fix */
+    .header-row {
+        display: flex;
+        padding: 0 20px;
+        margin-bottom: 16px;
+        font-weight: 600;
+        color: #374151;
+        font-size: 0.9rem;
+        border-bottom: 2px solid #E5E7EB;
+        padding-bottom: 12px;
+    }
+    
+    .header-id { min-width: 120px; }
+    .header-name { flex-grow: 1; }
+    .header-org { width: 220px; }
+    .header-status { width: 80px; text-align: center; }
+    .header-actions { width: 100px; text-align: center; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -158,13 +344,16 @@ def categorize(text):
 
 # --- INTERFAZ PRINCIPAL ---
 
+# Professional sidebar styling
 with st.sidebar:
-    st.header("Configuración")
-    ticket = st.secrets.get("MP_TICKET") or st.text_input("API Ticket", type="password")
-    if not ticket: st.warning("Ingresa Ticket"); st.stop()
+    st.markdown("<div style='padding: 1rem 0;'><h2 style='margin-bottom: 1.5rem;'>⚙️ Configuración</h2></div>", unsafe_allow_html=True)
+    ticket = st.secrets.get("MP_TICKET") or st.text_input("🔐 API Ticket", type="password")
+    if not ticket: 
+        st.warning("⚠️ Ingresa Ticket")
+        st.stop()
     
-    days = st.slider("Días", 1, 5, 2)
-    search = st.text_input("Filtrar texto")
+    days = st.slider("📅 Días", 1, 5, 2)
+    search = st.text_input("🔍 Filtrar texto")
     
     st.divider()
     
@@ -174,7 +363,8 @@ with st.sidebar:
     conn.close()
     st.download_button("📥 Descargar Guardados (CSV)", df_db.to_csv(index=False), "guardados.csv")
 
-st.title("Monitor de Licitaciones")
+st.markdown("<div class='main-container'>", unsafe_allow_html=True)
+st.title("🏢 Monitor de Licitaciones")
 
 # Tabs
 tab_all, tab_saved = st.tabs(["Listado General", "Solo Guardados"])
@@ -210,15 +400,15 @@ def render_list(is_saved_view_only=False):
         st.info("No hay datos para mostrar.")
         return
 
-    # Header de columnas simulado
+    # Header de columnas con alineación profesional
     st.markdown("""
-    <div style="display:flex; padding:0 16px; margin-bottom:8px; font-weight:bold; color:#6B7280; font-size:0.8rem;">
-        <div style="min-width:100px;">ID</div>
-        <div style="flex-grow:1;">LICITACIÓN</div>
-        <div style="width:200px;">ORGANISMO</div>
-        <div style="width:80px; text-align:center;">VISTO</div>
-        <div style="width:80px; text-align:center;">GUARDAR</div>
-        <div style="width:50px;"></div>
+    <div class="header-row">
+        <div class="header-id">ID</div>
+        <div class="header-name">LICITACIÓN</div>
+        <div class="header-org">ORGANISMO</div>
+        <div class="header-status">VISTO</div>
+        <div class="header-status">GUARDAR</div>
+        <div class="header-actions">ACCIONES</div>
     </div>
     """, unsafe_allow_html=True)
 
@@ -248,28 +438,28 @@ def render_list(is_saved_view_only=False):
         c1, c2, c3, c4, c5, c6 = st.columns([1.5, 4, 2, 1, 1, 0.5])
         
         with c1:
-            st.markdown(f"<span style='font-family:monospace; font-size:0.8rem; color:#2563EB'>{t_id}</span>", unsafe_allow_html=True)
+            st.markdown(f"<div class='col-id'>{t_id}</div>", unsafe_allow_html=True)
             
         with c2:
-            st.markdown(f"<div style='font-weight:600; font-size:0.95rem; line-height:1.2'>{tender.get('Nombre')}</div>", unsafe_allow_html=True)
+            st.markdown(f"<div class='col-name'>{tender.get('Nombre')}</div>", unsafe_allow_html=True)
             if cats_html: st.markdown(f"<div>{cats_html}</div>", unsafe_allow_html=True)
             
         with c3:
-            st.markdown(f"<div style='font-size:0.8rem; color:#4B5563; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;'>{org}</div>", unsafe_allow_html=True)
+            st.markdown(f"<div class='col-org'>{org}</div>", unsafe_allow_html=True)
             
         with c4:
             # Indicador Visual de Visto (No interactivo, solo informativo)
-            st.markdown(f"<div style='text-align:center; cursor:default;' title='Visto'>{icon_visto}</div>", unsafe_allow_html=True)
+            st.markdown(f"<div class='status-indicator status-seen' title='Visto'>{icon_visto}</div>", unsafe_allow_html=True)
             
         with c5:
-            # Botón Guardar (Toggle)
-            if st.button(icon_guardado, key=f"btn_save_{t_id}_{is_saved_view_only}", help="Guardar/Desguardar"):
+            # Botón Guardar (Toggle) con clase especial
+            if st.button(icon_guardado, key=f"btn_save_{t_id}_{is_saved_view_only}", help="Guardar/Desguardar", type="secondary"):
                 new_val = not state['guardado']
                 update_status(t_id, 'guardado', new_val)
                 st.rerun()
 
         with c6:
-             st.link_button("🔗", f"http://www.mercadopublico.cl/fichaLicitacion.html?idLicitacion={t_id}", help="Ir a ficha")
+            st.link_button("🔗", f"http://www.mercadopublico.cl/fichaLicitacion.html?idLicitacion={t_id}", help="Ir a ficha", type="secondary")
 
         # Expander para detalles técnicos (OCDS)
         with st.expander("    Ver detalle técnico", expanded=False):
@@ -303,3 +493,5 @@ with tab_all:
 
 with tab_saved:
     render_list(is_saved_view_only=True)
+
+st.markdown("</div>", unsafe_allow_html=True)
