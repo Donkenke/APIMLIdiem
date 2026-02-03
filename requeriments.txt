@@ -1,7 +1,7 @@
 streamlit
 pandas
-bs4
 requests
-beautifulsoup4
+urllib3
+sqlalchemy
 
 
