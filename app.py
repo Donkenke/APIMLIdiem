@@ -5,7 +5,6 @@ import urllib3
 import json
 import sqlite3
 import time
-import re
 from datetime import datetime, timedelta
 
 # --- CONFIGURATION ---
@@ -19,7 +18,6 @@ BASE_URL = "https://api.mercadopublico.cl/servicios/v1/publico"
 DB_FILE = "licitaciones.db"
 
 # --- KEYWORD MAPPING (Cleaned Values) ---
-# Removed numbers and text inside parentheses from Categories
 KEYWORD_MAPPING = {
   "Asesoría inspección": "Inspección Técnica y Supervisión",
   "AIF": "Inspección Técnica y Supervisión",
@@ -133,7 +131,7 @@ def save_tender_to_db(tender_dict):
         # Clean UI columns
         data_to_save.pop('Ver', None)
         data_to_save.pop('Guardar', None)
-        data_to_save.pop('MontoStr', None) # Remove formatted string
+        data_to_save.pop('MontoStr', None)
         
         if isinstance(data_to_save.get('FechaCierre'), pd.Timestamp):
             data_to_save['FechaCierre'] = data_to_save['FechaCierre'].isoformat()
@@ -218,7 +216,7 @@ def fetch_full_detail(codigo_externo, ticket):
     return None
 
 def parse_date(date_input):
-    """Enhanced Date Parser for API inconsistency."""
+    """Robust Date Parsing."""
     if not date_input:
         return None
     if isinstance(date_input, datetime):
@@ -226,12 +224,13 @@ def parse_date(date_input):
     
     date_str = str(date_input).strip()
     
-    # Try different formats commonly used by MP API
+    if "." in date_str and "T" in date_str:
+        date_str = date_str.split(".")[0]
+
     formats = [
-        "%Y-%m-%dT%H:%M:%S", # 2023-10-31T15:00:00
-        "%Y-%m-%d",          # 2023-10-31
-        "%d-%m-%Y",          # 31-10-2023
-        "%d/%m/%Y",          # 31/10/2023
+        "%Y-%m-%dT%H:%M:%S", # ISO Standard
+        "%Y-%m-%d",
+        "%d-%m-%Y",
     ]
     
     for fmt in formats:
@@ -239,6 +238,7 @@ def parse_date(date_input):
             return datetime.strptime(date_str, fmt)
         except ValueError:
             continue
+            
     return None
 
 def safe_float(val):
@@ -250,7 +250,6 @@ def safe_float(val):
         return 0.0
 
 def format_chilean_currency(val):
-    """Formats 10000 -> $10.000"""
     try:
         if not val: return "$0"
         return "${:,.0f}".format(val).replace(",", ".")
@@ -263,7 +262,6 @@ def parse_tender_data(raw_tender):
     fechas = raw_tender.get('Fechas', {})
     
     link_url = f"https://www.mercadopublico.cl/Procurement/Modules/RFB/DetailsAcquisition.aspx?idLicitacion={code}"
-    
     monto = safe_float(raw_tender.get('MontoEstimado'))
     
     return {
@@ -276,16 +274,19 @@ def parse_tender_data(raw_tender):
         "FechaCierre": parse_date(fechas.get('FechaCierre')),
         "Estado": raw_tender.get('Estado', ''),
         "MontoEstimado": monto,
-        "MontoStr": format_chilean_currency(monto), # For display
+        "MontoStr": format_chilean_currency(monto),
         "Descripcion": raw_tender.get('Descripcion', '')
     }
 
 def get_category_info(text):
+    """
+    Returns (Category, MatchedKeyword)
+    """
     text_lower = text.lower()
     for keyword, cat in KEYWORD_MAPPING.items():
         if keyword.lower() in text_lower:
-            return cat
-    return None
+            return cat, keyword 
+    return None, None
 
 def is_date_valid(date_obj):
     if not date_obj:
@@ -338,27 +339,44 @@ def main():
         else:
             start_d = end_d = today
 
-        # We put the spinner OUTSIDE the detailed loop to show "Analizando"
-        # but the progress bar INSIDE to keep the user engaged.
         with st.spinner(f"Obteniendo lista de licitaciones..."):
             summaries = fetch_summaries_for_range(start_d, end_d, ticket)
         
         filtered_candidates = []
         
-        # Phase 1: Quick Filter (Local CPU only, fast)
+        # DEBUG COUNTERS
+        debug_stats = {
+            "total_fetched": len(summaries),
+            "passed_keyword": 0,
+            "passed_date": 0,
+            "rejected_samples": []
+        }
+        
+        # Phase 1: Quick Filter
         for s in summaries:
             full_text = f"{s.get('Nombre', '')} {s.get('Descripcion', '')}"
-            cat = get_category_info(full_text)
+            cat, match_kw = get_category_info(full_text)
             
-            # Check date locally if available in summary, else filter later
-            c_date_str = s.get('FechaCierre', '')
-            c_date = parse_date(c_date_str)
+            c_date = parse_date(s.get('FechaCierre'))
             
-            if cat and is_date_valid(c_date):
-                s['_cat'] = cat
-                filtered_candidates.append(s)
+            if cat:
+                debug_stats["passed_keyword"] += 1
+                if is_date_valid(c_date):
+                    debug_stats["passed_date"] += 1
+                    s['_cat'] = cat
+                    s['_kw'] = match_kw 
+                    filtered_candidates.append(s)
+            else:
+                if len(debug_stats["rejected_samples"]) < 10:
+                     debug_stats["rejected_samples"].append({
+                         "ID": s.get('CodigoExterno'),
+                         "Nombre": s.get('Nombre'),
+                         "Razón": "Sin Palabras Clave"
+                     })
         
-        # Phase 2: Fetch Details (Network Bound, slow)
+        st.session_state['debug_stats'] = debug_stats
+        
+        # Phase 2: Fetch Details
         final_data = []
         if filtered_candidates:
             info_ph = st.empty()
@@ -373,24 +391,18 @@ def main():
                 
                 if detail:
                     parsed = parse_tender_data(detail)
-                    # Use detail dates if summary dates were missing/bad
                     if is_date_valid(parsed['FechaCierre']):
                         parsed['Categoría'] = summary['_cat']
+                        parsed['Palabra Clave'] = summary['_kw']
                         final_data.append(parsed)
                 
-                # Update progress
                 prog.progress((idx + 1) / total_cands)
-                
-                # IMPORTANT: Small sleep to prevent health-check timeouts on heavy loops
-                # and to avoid hitting API rate limits hard
                 time.sleep(0.05)
                 
             prog.empty()
             info_ph.empty()
         
-        # Create DF
         df = pd.DataFrame(final_data)
-        # Note: We do NOT sort by default to save processing and respect arrival order
         st.session_state.search_results = df
 
     # --- TAB 1: RESULTS ---
@@ -405,14 +417,16 @@ def main():
             
             df_results["Web"] = df_results["Link"]
             
-            # Column Order
+            # UPDATED COLUMN ORDER (Included Organismo & Unidad)
             cols_order = [
-                "Web", "Ver", "Guardar", "CodigoExterno", 
-                "Categoría", "Nombre", 
-                "FechaPublicacion", "FechaCierre", "MontoStr"
+                "Web", "CodigoExterno", 
+                "Nombre", "Organismo", "Unidad", # <--- Restored
+                "Categoría", "Palabra Clave", 
+                "FechaPublicacion", "FechaCierre", "MontoStr",
+                "Guardar", "Ver"
             ]
 
-            st.info("💡 Resultados cargados. Usa la columna 'Ver' para revisar detalles.")
+            st.info("💡 Resultados cargados. Las acciones están a la derecha.")
 
             edited_df = st.data_editor(
                 df_results,
@@ -421,15 +435,12 @@ def main():
                     "Web": st.column_config.LinkColumn(
                         "Web", display_text="🔗", width="small", help="MercadoPúblico"
                     ),
-                    "Ver": st.column_config.CheckboxColumn(
-                        "Ver", width="small", help="Ver Detalle"
-                    ),
-                    "Guardar": st.column_config.CheckboxColumn(
-                        "💾", width="small", help="Guardar"
-                    ),
                     "CodigoExterno": st.column_config.TextColumn("ID", width="small"),
-                    "Categoría": st.column_config.TextColumn("Categoría", width="medium"),
                     "Nombre": st.column_config.TextColumn("Nombre", width="large"),
+                    "Organismo": st.column_config.TextColumn("Organismo", width="medium"),
+                    "Unidad": st.column_config.TextColumn("Unidad", width="medium"),
+                    "Categoría": st.column_config.TextColumn("Categoría", width="medium"),
+                    "Palabra Clave": st.column_config.TextColumn("Match", width="small"),
                     "FechaPublicacion": st.column_config.DateColumn(
                         "Publicado", format="D MMM YYYY", width="medium"
                     ),
@@ -438,11 +449,17 @@ def main():
                     ),
                     "MontoStr": st.column_config.TextColumn(
                         "Monto (CLP)", width="medium"
+                    ),
+                    "Guardar": st.column_config.CheckboxColumn(
+                        "Guardar", width="small", help="Guardar en DB"
+                    ),
+                    "Ver": st.column_config.CheckboxColumn(
+                        "Ver", width="small", help="Ver Detalle"
                     )
                 },
-                disabled=["CodigoExterno", "Web", "Nombre", "Categoría", "FechaPublicacion", "FechaCierre", "MontoStr"],
+                disabled=["CodigoExterno", "Web", "Nombre", "Organismo", "Unidad", "Categoría", "Palabra Clave", "FechaPublicacion", "FechaCierre", "MontoStr"],
                 hide_index=True,
-                width="stretch", # Fixed deprecation warning
+                width="stretch",
                 height=800
             )
 
@@ -468,9 +485,24 @@ def main():
                             count += 1
                     st.toast(f"✅ {count} licitaciones guardadas.", icon="💾")
                 else:
-                    st.warning("Marca la columna 💾 para guardar.")
+                    st.warning("Marca la columna 'Guardar' para almacenar.")
         else:
             st.info("No hay resultados. Realiza una búsqueda.")
+
+        # --- DEBUG SECTION ---
+        if "debug_stats" in st.session_state:
+            stats = st.session_state["debug_stats"]
+            with st.expander("🕵️ Depuración (Debug) - Ver qué detectó la API"):
+                col_d1, col_d2, col_d3 = st.columns(3)
+                col_d1.metric("Total Fetched (API)", stats["total_fetched"])
+                col_d2.metric("Pasaron Filtro Palabras", stats["passed_keyword"])
+                col_d3.metric("Pasaron Filtro Fecha", stats["passed_date"])
+                
+                st.write("### Muestra de Licitaciones RECHAZADAS (Sin Coincidencia)")
+                if stats["rejected_samples"]:
+                    st.dataframe(pd.DataFrame(stats["rejected_samples"]), use_container_width=True)
+                else:
+                    st.write("No hubo rechazos o no se generaron muestras.")
 
     # --- TAB 2: DETAILS ---
     with tab_detail:
@@ -481,12 +513,14 @@ def main():
             st.caption(f"ID: {row_data['CodigoExterno']} | Estado: {row_data['Estado']}")
             
             st.markdown(f"**Categoría:** `{row_data.get('Categoría', 'N/A')}`")
+            st.markdown(f"**Palabra Clave:** `{row_data.get('Palabra Clave', 'N/A')}`")
 
             st.divider()
 
             d_col1, d_col2, d_col3 = st.columns(3)
             with d_col1:
                 st.metric("Organismo", row_data["Organismo"])
+                st.metric("Unidad", row_data["Unidad"]) # Added
             with d_col2:
                 pub = row_data["FechaPublicacion"]
                 if isinstance(pub, str): pub = parse_date(pub)
