@@ -23,28 +23,18 @@ EXCLUDE_KEYWORDS = [
 ALL_KEYWORDS = [kw for cat_list in CATEGORIES.values() for kw in cat_list]
 
 # --- HELPER FUNCTIONS ---
-def safe_get(data, key, default=""):
-    """Safely get value from dictionary"""
-    if not data or not isinstance(data, dict):
-        return default
-    return data.get(key, default) or default
-
-def format_date(date_str):
-    """Format ISO date to DD/MM/YYYY"""
-    if not date_str:
-        return ""
-    try:
-        dt = datetime.strptime(date_str[:10], "%Y-%m-%d")
-        return dt.strftime("%d/%m/%Y")
-    except:
-        return date_str
-
 def format_datetime(datetime_str):
-    """Format ISO datetime to DD/MM/YYYY HH:MM"""
+    """Format ISO datetime to DD/MM HH:MM"""
     if not datetime_str:
         return ""
     try:
-        dt = datetime.strptime(datetime_str[:19], "%Y-%m-%dT%H:%M:%S")
+        # Handle datetime with milliseconds like "2026-02-03T11:59:50.16"
+        if '.' in datetime_str:
+            dt_part = datetime_str.split('.')[0]
+        else:
+            dt_part = datetime_str[:19]
+        
+        dt = datetime.strptime(dt_part, "%Y-%m-%dT%H:%M:%S")
         return dt.strftime("%d/%m %H:%M")
     except:
         return datetime_str
@@ -72,12 +62,37 @@ def categorize_tender(tender):
         if any(kw in text for kw in keywords):
             detected_cats.append(cat_name)
     
-    return detected_cats if detected_cats else ["General"]
+    return detected_cats if detected_cats else []
 
 # --- API FUNCTIONS ---
 @st.cache_data(ttl=900, show_spinner=False)
 def fetch_tenders(ticket, days=2):
-    """Fetch tenders from MercadoPúblico API"""
+    """
+    Fetch tenders from MercadoPúblico API
+    
+    API Response Structure (based on actual response):
+    {
+        "Cantidad": 1,
+        "FechaCreacion": "2026-02-03T18:34:22.7824192Z",
+        "Version": "v1",
+        "Listado": [
+            {
+                "CodigoExterno": "1002588-7-LP26",
+                "Nombre": "...",
+                "Descripcion": "...",
+                "Comprador": {
+                    "NombreOrganismo": "...",
+                    "NombreUnidad": "...",
+                    "RegionUnidad": "..."
+                },
+                "Fechas": {
+                    "FechaPublicacion": "2026-02-03T11:59:50.16",
+                    "FechaCierre": "2026-02-23T15:00:00"
+                }
+            }
+        ]
+    }
+    """
     results = []
     
     for i in range(days):
@@ -94,6 +109,8 @@ def fetch_tenders(ticket, days=2):
             
             if response.status_code == 200:
                 data = response.json()
+                
+                # Get the Listado array from the response
                 tenders = data.get('Listado', [])
                 
                 # Filter relevant tenders
@@ -102,25 +119,17 @@ def fetch_tenders(ticket, days=2):
                     desc = tender.get('Descripcion', '')
                     
                     if is_relevant(nombre, desc):
-                        # Ensure Comprador is a dict
-                        if 'Comprador' not in tender or tender['Comprador'] is None:
-                            tender['Comprador'] = {}
-                        
-                        # Ensure Fechas is a dict  
-                        if 'Fechas' not in tender or tender['Fechas'] is None:
-                            tender['Fechas'] = {}
-                        
                         # Add categories
                         tender['CategoriasIDIEM'] = categorize_tender(tender)
-                        
-                        # Add public URL if not present
-                        if 'URL_Publica' not in tender:
-                            codigo = tender.get('CodigoExterno', '')
-                            tender['URL_Publica'] = f"https://www.mercadopublico.cl/Procurement/Modules/RFB/DetailsAcquisition.aspx?idLicitacion={codigo}"
-                        
                         results.append(tender)
             
+            elif response.status_code == 401:
+                st.error("❌ Error de autenticación: Verifica tu ticket de API")
+                break
+            
+        except requests.exceptions.Timeout:
+            st.warning(f"⏱️ Timeout consultando {date_query}")
         except Exception as e:
-            st.warning(f"Error consultando {date_query}: {str(e)}")
+            st.warning(f"⚠️ Error {date_query}: {str(e)}")
     
     return results
