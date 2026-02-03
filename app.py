@@ -1,3 +1,12 @@
+import sys
+import subprocess
+
+# --- FORCE INSTALL DEPENDENCY ---
+try:
+    import bs4
+except ImportError:
+    subprocess.check_call([sys.executable, "-m", "pip", "install", "beautifulsoup4"])
+
 import streamlit as st
 import requests
 import urllib3
