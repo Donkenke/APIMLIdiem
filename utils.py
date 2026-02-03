@@ -1,4 +1,3 @@
-
 import requests
 import urllib3
 import streamlit as st
@@ -103,6 +102,14 @@ def fetch_tenders(ticket, days=2):
                     desc = tender.get('Descripcion', '')
                     
                     if is_relevant(nombre, desc):
+                        # Ensure Comprador is a dict
+                        if 'Comprador' not in tender or tender['Comprador'] is None:
+                            tender['Comprador'] = {}
+                        
+                        # Ensure Fechas is a dict  
+                        if 'Fechas' not in tender or tender['Fechas'] is None:
+                            tender['Fechas'] = {}
+                        
                         # Add categories
                         tender['CategoriasIDIEM'] = categorize_tender(tender)
                         
