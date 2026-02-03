@@ -17,7 +17,7 @@ st.set_page_config(page_title="Monitor de Licitaciones", page_icon="📊", layou
 BASE_URL = "https://api.mercadopublico.cl/servicios/v1/publico"
 DB_FILE = "licitaciones.db"
 
-# 1. NEW KEYWORD LIST (Extracted from your uploaded file)
+# KEYWORD LIST (From uploaded file)
 SEARCH_KEYWORDS = [
     "Asesoría inspección", "AIF", "AIT", "ATIF", "ATOD", "AFOS", "ATO", "ITO",
     "Estudio Ingeniería", "Estructural", "Mecánica Suelos", "Geológico", "Geotécnico",
@@ -44,9 +44,8 @@ SEARCH_KEYWORDS = [
     "Servicio de Salud", "Vialidad", "Ensayos"
 ]
 
-# --- DATABASE FUNCTIONS (Persistence) ---
+# --- DATABASE FUNCTIONS ---
 def init_db():
-    """Initializes a local SQLite database for bookmarks."""
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
     c.execute('''
@@ -64,20 +63,24 @@ def init_db():
     conn.close()
 
 def save_tender_to_db(tender_dict):
-    """Saves a single tender to the database."""
     try:
+        # Convert timestamp objects to string for storage if necessary
+        data_to_save = tender_dict.copy()
+        if isinstance(data_to_save.get('FechaCierre'), pd.Timestamp):
+            data_to_save['FechaCierre'] = data_to_save['FechaCierre'].isoformat()
+        
         conn = sqlite3.connect(DB_FILE)
         c = conn.cursor()
         c.execute('''
             INSERT OR REPLACE INTO marcadores (codigo_externo, nombre, organismo, fecha_cierre, url, raw_data)
             VALUES (?, ?, ?, ?, ?, ?)
         ''', (
-            tender_dict['CodigoExterno'],
-            tender_dict['Nombre'],
-            tender_dict['Organismo'],
-            tender_dict['FechaCierre'],
-            tender_dict['Link'],
-            json.dumps(tender_dict)
+            data_to_save['CodigoExterno'],
+            data_to_save['Nombre'],
+            data_to_save['Organismo'],
+            str(data_to_save['FechaCierre']),
+            data_to_save['Link'],
+            json.dumps(data_to_save, default=str)
         ))
         conn.commit()
         conn.close()
@@ -87,7 +90,6 @@ def save_tender_to_db(tender_dict):
         return False
 
 def get_saved_tenders():
-    """Retrieves saved tenders."""
     try:
         conn = sqlite3.connect(DB_FILE)
         df = pd.read_sql_query("SELECT * FROM marcadores ORDER BY fecha_guardado DESC", conn)
@@ -97,7 +99,6 @@ def get_saved_tenders():
         return pd.DataFrame()
 
 def delete_tender_from_db(codigo_externo):
-    """Removes a tender from bookmarks."""
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
     c.execute("DELETE FROM marcadores WHERE codigo_externo = ?", (codigo_externo,))
@@ -107,29 +108,20 @@ def delete_tender_from_db(codigo_externo):
 # --- API & LOGIC FUNCTIONS ---
 
 def get_ticket():
-    """Safe retrieval of API Ticket from secrets."""
     try:
         return st.secrets.get("MP_TICKET")
     except Exception:
         return None
 
-# 4. CACHING IMPLEMENTATION
-# This ensures that if the user searches the same dates, we use the cache instead of the API.
 @st.cache_data(ttl=3600, show_spinner=False)
 def fetch_summaries_for_range(start_date, end_date, ticket):
-    """Fetches summaries for a range of dates. Cached for 1 hour."""
     all_summaries = []
-    
     delta = end_date - start_date
     total_days = delta.days + 1
-    
-    # We use a placeholder for progress in the UI outside the cache function
-    # But inside cache, we just do the logic
     
     for i in range(total_days):
         current_date = start_date + timedelta(days=i)
         date_str = current_date.strftime("%d%m%Y")
-        
         url = f"{BASE_URL}/licitaciones.json?fecha={date_str}&ticket={ticket}"
         try:
             response = requests.get(url, verify=False, timeout=10)
@@ -138,13 +130,11 @@ def fetch_summaries_for_range(start_date, end_date, ticket):
                 items = data.get('Listado', [])
                 all_summaries.extend(items)
         except Exception:
-            pass # Skip errors to keep moving
-        
+            pass
     return all_summaries
 
 @st.cache_data(ttl=3600, show_spinner=False)
 def fetch_full_detail(codigo_externo, ticket):
-    """Fetches full details for a specific tender code. Cached."""
     url = f"{BASE_URL}/licitaciones.json?codigo={codigo_externo}&ticket={ticket}"
     try:
         response = requests.get(url, verify=False, timeout=10)
@@ -156,63 +146,48 @@ def fetch_full_detail(codigo_externo, ticket):
         pass
     return None
 
-def parse_date_str(date_str):
-    """Helper to parse API date strings."""
-    if not date_str:
+def parse_date(date_input):
+    """Robust date parsing ensuring datetime objects."""
+    if not date_input:
         return None
+    if isinstance(date_input, datetime):
+        return date_input
     try:
-        # Standard format usually returned by MP: '2023-10-31T15:00:00'
-        return datetime.strptime(date_str, "%Y-%m-%dT%H:%M:%S")
+        # Try ISO format often returned by API: '2023-10-31T15:00:00'
+        return datetime.strptime(str(date_input), "%Y-%m-%dT%H:%M:%S")
     except ValueError:
         try:
-            # Fallback for simple date
-            return datetime.strptime(date_str, "%Y-%m-%d")
-        except:
+            # Try simple date
+            return datetime.strptime(str(date_input), "%Y-%m-%d")
+        except ValueError:
             return None
 
 def parse_tender_data(raw_tender):
-    """Extracts relevant fields."""
     code = raw_tender.get('CodigoExterno', 'N/A')
     comprador = raw_tender.get('Comprador', {})
     fechas = raw_tender.get('Fechas', {})
     
     return {
         "CodigoExterno": code,
+        "Link": f"https://www.mercadopublico.cl/ListadoLicitaciones/Pantallas/DirectorioLicitacion.aspx?idLicitacion={code}",
         "Nombre": raw_tender.get('Nombre', 'Sin Nombre'),
-        "Descripcion": raw_tender.get('Descripcion', ''),
         "Organismo": comprador.get('NombreOrganismo', 'N/A'),
         "Unidad": comprador.get('NombreUnidad', 'N/A'),
-        "FechaPublicacion": fechas.get('FechaPublicacion', ''),
-        "FechaCierre": fechas.get('FechaCierre', ''),
-        "Link": f"https://www.mercadopublico.cl/ListadoLicitaciones/Pantallas/DirectorioLicitacion.aspx?idLicitacion={code}",
+        "FechaPublicacion": parse_date(fechas.get('FechaPublicacion')),
+        "FechaCierre": parse_date(fechas.get('FechaCierre')),
         "Estado": raw_tender.get('Estado', ''),
-        "MontoEstimado": raw_tender.get('MontoEstimado', 0)
+        "MontoEstimado": float(raw_tender.get('MontoEstimado', 0)),
+        "Descripcion": raw_tender.get('Descripcion', '')
     }
 
 def is_relevant(text):
-    """
-    Checks if text contains ANY of the keywords from the uploaded file.
-    Excludes are removed as requested.
-    """
     text_lower = text.lower()
-    
-    # Check Includes (from strict list)
     return any(kw.lower() in text_lower for kw in SEARCH_KEYWORDS)
 
-def is_date_valid(date_str):
-    """
-    3. DATE FILTERING
-    Returns True if the closing date is in the future or valid.
-    Returns False if the date has passed.
-    """
-    if not date_str:
-        return True # Keep if date is missing to be safe
-    
-    dt_obj = parse_date_str(date_str)
-    if dt_obj:
-        if dt_obj < datetime.now():
-            return False # Expired
-    return True
+def is_date_valid(date_obj):
+    if not date_obj:
+        return True
+    return date_obj >= datetime.now()
 
 # --- MAIN APP UI ---
 
@@ -220,22 +195,20 @@ def main():
     init_db()
     ticket = get_ticket()
     
-    st.title("🏛️ Buscador Licitaciones (Optimizado)")
+    st.title("🏛️ Buscador Licitaciones")
     
     if not ticket:
-        st.warning("⚠️ Ticket no encontrado. Configure MP_TICKET en `.streamlit/secrets.toml`.")
+        st.warning("⚠️ Ticket no encontrado.")
         st.stop()
 
-    # --- TOP CONTROLS ---
+    # --- CONTROLS ---
     col1, col2, col3 = st.columns([2, 1, 1])
     
     with col1:
-        # Date Slicer (Range)
         today = datetime.now()
         ten_days_ago = today - timedelta(days=10)
-        
         date_range = st.date_input(
-            "Rango de Fechas (Fecha Publicación)",
+            "Rango de Fechas (Publicación)",
             value=(ten_days_ago, today),
             max_value=today,
             format="DD/MM/YYYY"
@@ -244,176 +217,182 @@ def main():
     with col2:
         st.write("") 
         st.write("") 
-        # Update Button
-        # Note: We use type="primary" to highlight it
         search_clicked = st.button("🔄 Buscar Datos", type="primary", use_container_width=True)
 
     with col3:
          st.write("")
          st.write("")
-         st.caption(f"Filtro activo: {len(SEARCH_KEYWORDS)} palabras clave.")
+         st.caption(f"Filtro: {len(SEARCH_KEYWORDS)} palabras clave.")
 
     # --- TABS ---
-    tab_search, tab_saved = st.tabs(["🔍 Resultados", "💾 Marcadores"])
+    # We use 'selection' key to track interactions
+    tab_search, tab_detail, tab_saved = st.tabs(["🔍 Resultados", "📄 Detalle", "💾 Marcadores"])
 
-    # --- LOGIC: FETCH DATA ---
-    # Trigger if search is clicked OR if we have valid dates and no data yet
-    should_run = search_clicked or "search_results" not in st.session_state
-
-    if should_run:
-        
-        # Handle date range input
-        if isinstance(date_range, tuple) and len(date_range) == 2:
-            start_d, end_d = date_range
-        elif isinstance(date_range, tuple) and len(date_range) == 1:
-            start_d = end_d = date_range[0]
+    # --- FETCH LOGIC ---
+    if search_clicked or "search_results" not in st.session_state:
+        if isinstance(date_range, tuple):
+            start_d = date_range[0]
+            end_d = date_range[1] if len(date_range) > 1 else date_range[0]
         else:
             start_d = end_d = today
 
-        with st.spinner(f"Analizando licitaciones desde {start_d.strftime('%d/%m')} al {end_d.strftime('%d/%m')}..."):
-            
-            # 1. Fetch Summaries (Using Cached Function)
+        with st.spinner(f"Analizando..."):
             summaries = fetch_summaries_for_range(start_d, end_d, ticket)
-            
-            # 2. Filter Locally (Keywords + Date Validity)
             filtered_summaries = []
             
-            # Create a progress bar for the filtering phase
-            prog_text = st.empty()
-            prog_bar = st.progress(0)
-            
-            total_items = len(summaries)
-            
-            for idx, s in enumerate(summaries):
-                # UI Update every 10 items to save resources
-                if idx % 10 == 0:
-                    prog_bar.progress((idx + 1) / total_items)
-                    prog_text.caption(f"Filtrando {idx+1}/{total_items}...")
-
+            # Phase 1: Filter
+            for s in summaries:
                 full_text = f"{s.get('Nombre', '')} {s.get('Descripcion', '')}"
-                closing_date_str = s.get('FechaCierre', '')
+                c_date = parse_date(s.get('FechaCierre'))
                 
-                # Apply Keyword Filter
-                if is_relevant(full_text):
-                    # Apply Date Filter (Must not be expired)
-                    if is_date_valid(closing_date_str):
-                        filtered_summaries.append(s)
+                if is_relevant(full_text) and is_date_valid(c_date):
+                    filtered_summaries.append(s)
             
-            prog_text.empty()
-            prog_bar.empty()
-            
-            # 3. Fetch Details
+            # Phase 2: Details
             final_data = []
             if filtered_summaries:
-                info_ph = st.empty()
-                info_ph.info(f"Encontrados {len(filtered_summaries)} candidatos. Descargando detalles...")
-                
-                prog_details = st.progress(0)
+                prog = st.progress(0)
                 for idx, summary in enumerate(filtered_summaries):
                     code = summary.get('CodigoExterno')
-                    # Use Cached Detail Fetcher
                     detail = fetch_full_detail(code, ticket)
                     if detail:
                         final_data.append(parse_tender_data(detail))
-                    
-                    prog_details.progress((idx + 1) / len(filtered_summaries))
-                
-                prog_details.empty()
-                info_ph.empty()
+                    prog.progress((idx + 1) / len(filtered_summaries))
+                prog.empty()
             
-            # Save to Session State
-            st.session_state.search_results = pd.DataFrame(final_data)
+            # Save and Sort by Publicacion (Newest first)
+            df = pd.DataFrame(final_data)
+            if not df.empty:
+                df = df.sort_values(by="FechaPublicacion", ascending=False)
+            st.session_state.search_results = df
 
-    # --- TAB 1: DISPLAY RESULTS ---
+    # --- TAB 1: RESULTS ---
     with tab_search:
-        if "search_results" in st.session_state:
-            df_results = st.session_state.search_results
+        if "search_results" in st.session_state and not st.session_state.search_results.empty:
+            df_results = st.session_state.search_results.copy()
             
-            if df_results.empty:
-                st.info("No se encontraron licitaciones relevantes o vigentes en este periodo.")
-            else:
-                st.success(f"Mostrando {len(df_results)} licitaciones filtradas.")
+            # Add Guardar column
+            if "Guardar" not in df_results.columns:
+                df_results.insert(0, "Guardar", False)
                 
-                # Ensure 'Guardar' column exists for the editor
-                if "Guardar" not in df_results.columns:
-                    df_results.insert(0, "Guardar", False)
+            # Rearrange columns: Guardar -> Codigo -> Link -> Nombre -> ...
+            cols_order = ["Guardar", "CodigoExterno", "Link", "Nombre", "Organismo", "FechaPublicacion", "FechaCierre", "MontoEstimado"]
+            # Keep other columns hidden but available in data
+            
+            st.info("💡 Selecciona una fila para ver la información completa en la pestaña 'Detalle'.")
 
-                # 5. EXPANDED TABLE HEIGHT
-                edited_df = st.data_editor(
-                    df_results,
-                    column_config={
-                        "Guardar": st.column_config.CheckboxColumn(
-                            "Seleccionar",
-                            help="Guardar en base de datos",
-                            default=False,
-                            width="small"
-                        ),
-                        "Link": st.column_config.LinkColumn(
-                            "Ver Ficha",
-                            display_text="🔗 Abrir"
-                        ),
-                        "MontoEstimado": st.column_config.NumberColumn(
-                            "Monto",
-                            format="$%d"
-                        ),
-                        "FechaCierre": st.column_config.DatetimeColumn(
-                            "Cierre",
-                            format="D MMM YYYY, HH:mm"
-                        )
-                    },
-                    disabled=["CodigoExterno", "Nombre", "Organismo", "Unidad", "FechaCierre", "Link", "MontoEstimado", "Estado", "FechaPublicacion", "Descripcion"],
-                    hide_index=True,
-                    use_container_width=True,
-                    height=800  # <--- Increased height here
-                )
+            # DATA EDITOR
+            edited_df = st.data_editor(
+                df_results,
+                column_order=cols_order,
+                column_config={
+                    "Guardar": st.column_config.CheckboxColumn(
+                        "✔", width="small", help="Marcar para guardar"
+                    ),
+                    "CodigoExterno": st.column_config.TextColumn("ID Licitación", width="medium"),
+                    "Link": st.column_config.LinkColumn(
+                        "Web", display_text="🔗", width="small", help="Ir a MercadoPúblico"
+                    ),
+                    "Nombre": st.column_config.TextColumn(
+                        "Nombre Licitación", width="large", help="Nombre del proyecto"
+                    ),
+                    "Organismo": st.column_config.TextColumn("Organismo", width="medium"),
+                    "FechaPublicacion": st.column_config.DateColumn(
+                        "Publicado", format="D MMM YYYY"
+                    ),
+                    "FechaCierre": st.column_config.DateColumn(
+                        "Cierre", format="D MMM YYYY"
+                    ),
+                    "MontoEstimado": st.column_config.NumberColumn(
+                        "Monto ($)", format="$%d"
+                    )
+                },
+                disabled=["CodigoExterno", "Link", "Nombre", "Organismo", "FechaPublicacion", "FechaCierre", "MontoEstimado"],
+                hide_index=True,
+                use_container_width=True,
+                height=700,
+                selection_mode="single-row", # Enables selection
+                on_change=None,
+                key="data_editor" # Key to retrieve selection
+            )
 
-                # Save Button
-                if st.button("💾 Guardar Seleccionadas"):
-                    tenders_to_save = edited_df[edited_df["Guardar"] == True]
-                    if not tenders_to_save.empty:
-                        count = 0
-                        for index, row in tenders_to_save.iterrows():
-                            tender_dict = row.drop("Guardar").to_dict()
-                            if save_tender_to_db(tender_dict):
-                                count += 1
-                        st.toast(f"✅ {count} licitaciones guardadas.", icon="💾")
-                        time.sleep(1)
-                    else:
-                        st.warning("Selecciona al menos una fila.")
+            # SAVE BUTTON
+            if st.button("💾 Guardar Seleccionados (Checkbox)", type="primary"):
+                tenders_to_save = edited_df[edited_df["Guardar"] == True]
+                if not tenders_to_save.empty:
+                    count = 0
+                    for index, row in tenders_to_save.iterrows():
+                        tender_dict = row.drop("Guardar").to_dict()
+                        if save_tender_to_db(tender_dict):
+                            count += 1
+                    st.toast(f"✅ {count} licitaciones guardadas.", icon="💾")
+                else:
+                    st.warning("Marca la casilla '✔' en las filas que desees guardar.")
         else:
-            st.info("Presiona 'Buscar Datos' para comenzar.")
+            st.info("No hay resultados. Realiza una búsqueda.")
 
-    # --- TAB 2: SAVED ---
+    # --- TAB 2: DETAILS ---
+    with tab_detail:
+        # Check if a row is selected
+        selection = st.session_state.get("data_editor", {}).get("selection", {}).get("rows", [])
+        
+        if selection and "search_results" in st.session_state:
+            # Get the selected row index (it respects the current sort order of the dataframe)
+            selected_idx = selection[0]
+            # We must use the edited_df (from the previous tab) logic to find the data, 
+            # but simpler is to grab the row from the source df using iloc if not reordered by user interactions significantly.
+            # Note: data_editor sorting in UI doesn't reshape the underlying DF index automatically in 1.30+ unless handled carefully.
+            # However, for single selection display, we can usually trust the index if the user hasn't client-side sorted.
+            
+            # Robust way: The selection returns the integer index of the displayed row.
+            row_data = st.session_state.search_results.iloc[selected_idx]
+            
+            st.header(row_data["Nombre"])
+            st.caption(f"ID: {row_data['CodigoExterno']} | Estado: {row_data['Estado']}")
+            
+            d_col1, d_col2, d_col3 = st.columns(3)
+            with d_col1:
+                st.metric("Organismo", row_data["Organismo"])
+            with d_col2:
+                pub_date = row_data["FechaPublicacion"]
+                st.metric("Fecha Publicación", pub_date.strftime("%d %b %Y") if pub_date else "N/A")
+            with d_col3:
+                close_date = row_data["FechaCierre"]
+                st.metric("Fecha Cierre", close_date.strftime("%d %b %Y") if close_date else "N/A")
+
+            st.divider()
+            st.subheader("Descripción")
+            st.write(row_data["Descripcion"])
+            
+            st.divider()
+            st.markdown(f"[**🔗 Ver Ficha en MercadoPúblico**]({row_data['Link']})")
+            
+        else:
+            st.info("👈 Selecciona una fila en la pestaña 'Resultados' para ver el detalle aquí.")
+
+    # --- TAB 3: SAVED ---
     with tab_saved:
-        st.subheader("📚 Mis Licitaciones")
+        st.subheader("📚 Mis Marcadores")
         df_saved = get_saved_tenders()
         
         if df_saved.empty:
-            st.info("No hay marcadores guardados.")
+            st.info("No hay licitaciones guardadas.")
         else:
             st.dataframe(
                 df_saved,
                 column_config={
-                    "url": st.column_config.LinkColumn(
-                        "Link",
-                        display_text="🔗 Ir al Portal"
-                    ),
-                    "fecha_guardado": st.column_config.DatetimeColumn(
-                        "Guardado el",
-                        format="D MMM YYYY, HH:mm"
-                    )
+                    "url": st.column_config.LinkColumn("Link", display_text="🔗"),
+                    "fecha_guardado": st.column_config.DatetimeColumn("Guardado", format="D MMM YYYY, HH:mm"),
+                    "fecha_cierre": st.column_config.TextColumn("Cierre (Raw)") 
                 },
                 hide_index=True,
-                use_container_width=True,
-                height=600
+                use_container_width=True
             )
-            
-            st.divider()
-            col_del, _ = st.columns([1, 3])
-            with col_del:
-                code_to_del = st.selectbox("Eliminar marcador:", df_saved['codigo_externo'])
-                if st.button("🗑️ Borrar"):
-                    delete_tender_from_db(code_to_del)
+            if st.button("🗑️ Borrar Marcador Seleccionado"):
+                # Simple implementation for deletion (could be improved with selection)
+                code = st.selectbox("Selecciona ID para borrar", df_saved['codigo_externo'])
+                if code:
+                    delete_tender_from_db(code)
                     st.rerun()
 
 if __name__ == "__main__":
