@@ -7,13 +7,13 @@ import sqlite3
 import time
 import math
 import concurrent.futures
-import numpy as np # Added for calc
+import numpy as np
 from datetime import datetime, timedelta
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
-# --- AI & SCORING LIBRARIES ---
-from sentence_transformers import SentenceTransformer
+# --- SCIKIT-LEARN (LIGHTWEIGHT INTELLIGENCE) ---
+from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
 
 # --- CONFIGURATION ---
@@ -22,18 +22,18 @@ st.set_page_config(page_title="Monitor de Licitaciones Turbo", page_icon="⚡", 
 
 # Constants
 BASE_URL = "https://api.mercadopublico.cl/servicios/v1/publico"
-DB_FILE = "licitaciones_v4.db" 
+DB_FILE = "licitaciones_v5_light.db" 
 ITEMS_PER_PAGE = 50 
 MAX_WORKERS = 5 
 
-# --- AI CONFIGURATION (IDIEM CORE BUSINESS) ---
+# --- IDIEM CORE BUSINESS DEFINITION ---
+# Texto "Ancla": Describe el negocio perfecto.
 IDIEM_ANCHOR_TEXT = """
-Servicios de ingeniería, inspección técnica de obras (ITO), supervisión de construcción, 
-mecánica de suelos, geotecnia, ensayos de materiales, hormigón, asfalto, acero, 
-laboratorio de control de calidad, topografía y levantamientos, sustentabilidad ambiental, 
-huella de carbono, eficiencia energética en edificación, revisión de proyectos de cálculo estructural, 
-gestión de contratos, peritajes forenses de construcción, estructuras y edificación pública,
-infraestructura vial, aeroportuaria y túneles.
+Servicios de ingeniería civil, inspección técnica de obras (ITO), supervisión de construcción, 
+mecánica de suelos, geotecnia, ensayos de materiales, laboratorio de hormigón, asfalto, acero, 
+control de calidad, topografía, levantamientos, sustentabilidad ambiental, huella de carbono, 
+eficiencia energética, cálculo estructural, peritajes forenses, edificación pública,
+infraestructura vial, aeroportuaria, túneles, consultoría técnica.
 """
 
 # --- KEYWORD MAPPING ---
@@ -175,7 +175,6 @@ def restore_tender(code):
 def save_tender(data):
     try:
         clean = data.copy()
-        # Clean keys that are not needed for DB or might cause issues
         for k in ['Ver','Guardar','Ignorar','MontoStr','EstadoTiempo', 'Similitud']: 
             clean.pop(k, None)
             
@@ -194,12 +193,6 @@ def get_saved():
         conn.close()
         return df
     except: return pd.DataFrame()
-
-def delete_saved(code):
-    conn = sqlite3.connect(DB_FILE)
-    conn.execute("DELETE FROM marcadores WHERE codigo_externo = ?", (code,))
-    conn.commit()
-    conn.close()
 
 # --- CACHE & API ---
 def get_cached_details(codigos):
@@ -221,17 +214,13 @@ def save_cache(code, data):
     except: pass
 
 def get_api_session():
-    """Creates a robust session with Retries and User-Agent."""
     session = requests.Session()
     session.headers.update({
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
         "Accept": "application/json"
     })
     retry_strategy = Retry(
-        total=3,
-        backoff_factor=1,
-        status_forcelist=[429, 500, 502, 503, 504],
-        allowed_methods=["HEAD", "GET", "OPTIONS"]
+        total=3, backoff_factor=1, status_forcelist=[429, 500, 502, 503, 504], allowed_methods=["HEAD", "GET", "OPTIONS"]
     )
     adapter = HTTPAdapter(max_retries=retry_strategy)
     session.mount("https://", adapter)
@@ -264,9 +253,7 @@ def fetch_summaries_raw(start_date, end_date, ticket):
             
     return results, errors
 
-# --- CONCURRENT FETCH ---
 def fetch_detail_worker(args):
-    """Worker function for threading."""
     code, ticket = args
     try:
         session = get_api_session() 
@@ -276,46 +263,50 @@ def fetch_detail_worker(args):
             js = r.json()
             if js.get('Listado'):
                 return code, js['Listado'][0]
-    except Exception:
-        pass
+    except: pass
     return code, None
 
-# --- AI SCORING HELPERS ---
-@st.cache_resource
-def load_embedding_model():
-    """Loads a lightweight (80MB) but effective model for semantic similarity."""
-    return SentenceTransformer('all-MiniLM-L6-v2')
-
-def calculate_relevance_batch(tenders_list):
+# --- ROBUST LIGHTWEIGHT SCORING ENGINE ---
+def calculate_relevance_tfidf(tenders_list):
     """
-    Receives list of dicts, vectorizes Nombre+Desc, compares to Anchor, returns list of scores (0-100).
+    Usa TF-IDF de Scikit-Learn.
+    1. Combina el ANCHOR TEXT con todas las licitaciones en un corpus.
+    2. Calcula la similitud de coseno del Anchor vs cada licitación.
+    3. Es rápido, no requiere descarga de modelos y funciona con poca RAM.
     """
     if not tenders_list:
         return []
     
     try:
-        model = load_embedding_model()
+        # Preparamos textos
+        # El índice 0 será siempre nuestro Anchor
+        texts = [IDIEM_ANCHOR_TEXT]
         
-        # 1. Vectorize Anchor
-        anchor_vec = model.encode([IDIEM_ANCHOR_TEXT])
+        for t in tenders_list:
+            # Combinar Título + Descripción truncada
+            content = f"{t.get('Nombre', '')} {t.get('Descripcion', '')[:500]}"
+            texts.append(content)
+            
+        # Vectorización (Ignoramos stop words comunes en español si es posible, o usamos default)
+        # Usamos n-grams (1,2) para capturar "mecanica de suelos" como concepto
+        vectorizer = TfidfVectorizer(ngram_range=(1, 2), min_df=1)
         
-        # 2. Prepare Tender Texts (Name + Truncated Description)
-        tender_texts = [
-            f"{t.get('Nombre', '')} {t.get('Descripcion', '')[:300]}" 
-            for t in tenders_list
-        ]
+        tfidf_matrix = vectorizer.fit_transform(texts)
         
-        # 3. Vectorize Batch
-        tenders_vec = model.encode(tender_texts)
+        # Similitud: Primera fila (Anchor) contra todas las demás
+        # cosine_similarity devuelve shape (1, n_samples)
+        # tfidf_matrix[0:1] es el vector del anchor
+        # tfidf_matrix[1:] son los vectores de las licitaciones
+        cosine_sim = cosine_similarity(tfidf_matrix[0:1], tfidf_matrix[1:])
         
-        # 4. Cosine Similarity
-        sim_scores = cosine_similarity(anchor_vec, tenders_vec)[0]
+        # cosine_sim es [[score1, score2, ...]]
+        scores = cosine_sim[0]
         
-        # 5. Normalize
-        return (sim_scores * 100).astype(int).tolist()
+        # Normalizar a 0-100 entero
+        return (scores * 100).astype(int).tolist()
         
     except Exception as e:
-        print(f"Error in AI scoring: {e}")
+        st.error(f"Error cálculo: {e}")
         return [0] * len(tenders_list)
 
 # --- UTILS ---
@@ -369,7 +360,6 @@ def main():
 
     t_res, t_audit, t_sav = st.tabs(["🔍 Resultados", "🕵️ Auditoría", "💾 Guardados"])
 
-    # LOGIC
     if 'search_results' not in st.session_state:
         if isinstance(dr, tuple): start, end = dr[0], dr[1] if len(dr)>1 else dr[0]
         else: start = end = dr
@@ -380,9 +370,8 @@ def main():
             raw_items, fetch_errors = fetch_summaries_raw(start, end, ticket)
             
         if fetch_errors:
-            st.warning(f"Hubo {len(fetch_errors)} errores en la descarga de resúmenes.")
+            st.warning(f"Errores descarga: {len(fetch_errors)}")
 
-        # AUDIT & PRE-FILTER
         audit_logs = []
         candidates = []
         codes_needed_for_api = []
@@ -428,39 +417,28 @@ def main():
             if c not in cached_map:
                 codes_needed_for_api.append(c)
 
-        # 3. Parallel Fetching (The Turbo Part)
+        # 3. Parallel Fetching
         if codes_needed_for_api:
-            st.info(f"Descargando {len(codes_needed_for_api)} detalles en paralelo... (Esto es mucho más rápido)")
+            st.info(f"Descargando {len(codes_needed_for_api)} detalles...")
             pbar = st.progress(0)
-            
-            # Prepare args for worker
             tasks = [(code, ticket) for code in codes_needed_for_api]
             results_fetched = 0
             
             with concurrent.futures.ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
-                # Submit all tasks
                 future_to_code = {executor.submit(fetch_detail_worker, task): task[0] for task in tasks}
-                
                 for future in concurrent.futures.as_completed(future_to_code):
                     code_done, detail_data = future.result()
                     results_fetched += 1
-                    
                     if detail_data:
-                        # Save to Cache & Update Map
                         save_cache(code_done, detail_data)
                         cached_map[code_done] = json.dumps(detail_data)
-                    
-                    # Update Progress
                     pbar.progress(results_fetched / len(codes_needed_for_api))
-
             pbar.empty()
         
-        # 4. Final Processing (From Cache)
+        # 4. Processing
         final_list = []
         for cand in candidates:
             code = cand['CodigoExterno']
-            
-            # Load from cache
             detail = None
             if code in cached_map:
                 try: detail = json.loads(cached_map[code])
@@ -489,8 +467,6 @@ def main():
                     }
                     if not d_cierre: row["EstadoTiempo"] = "⚠️ Sin Fecha"
                     final_list.append(row)
-                    
-                    # Audit Update
                     for l in audit_logs:
                         if l['ID'] == code: l['Estado_Audit'], l['Motivo'] = "VISIBLE", "OK"
                 else:
@@ -498,55 +474,39 @@ def main():
                         if l['ID'] == code: l['Estado_Audit'], l['Motivo'] = "Descartado", "Vencida (Detalle)"
             else:
                  for l in audit_logs:
-                     if l['ID'] == code: l['Estado_Audit'], l['Motivo'] = "Error API", "Fallo descarga detalle"
+                     if l['ID'] == code: l['Estado_Audit'], l['Motivo'] = "Error API", "Fallo descarga"
 
-        # --- AI SCORING INJECTION ---
+        # --- SCORING (TF-IDF) ---
         if final_list:
-            with st.spinner("🧠 Analizando relevancia con IA..."):
-                scores = calculate_relevance_batch(final_list)
+            with st.spinner("🧠 Analizando relevancia (TF-IDF)..."):
+                scores = calculate_relevance_tfidf(final_list)
                 for i, row in enumerate(final_list):
-                    # Save as 0.0-1.0 float for Progress Column
-                    row['Similitud'] = scores[i] / 100.0 
+                    row['Similitud'] = scores[i] / 100.0
 
         st.session_state.search_results = pd.DataFrame(final_list)
         st.session_state.audit_data = pd.DataFrame(audit_logs)
         st.session_state.page_number = 1
 
-    # --- TABS RENDERING ---
-    # Tab 1: Results
+    # RENDER TABS
     with t_res:
         if 'search_results' in st.session_state and not st.session_state.search_results.empty:
             df = st.session_state.search_results.copy()
+            if "Similitud" in df.columns: df = df.sort_values("Similitud", ascending=False)
             
-            # Sort by Relevance (Similitud) descending
-            if "Similitud" in df.columns:
-                df = df.sort_values("Similitud", ascending=False)
-            elif "FechaPublicacion" in df.columns:
-                df = df.sort_values("FechaPublicacion", ascending=False)
-
-            for c in ["Guardar","Ignorar"]: 
-                if c not in df.columns: df[c] = False
-            if "Similitud" not in df.columns: df["Similitud"] = 0.0 # Fallback
-
-            df["Web"] = df["Link"]
-            
-            # Pagination
+            # Paginación y Tabla
             total_rows = len(df)
             total_pages = math.ceil(total_rows / ITEMS_PER_PAGE)
-            
             cp1, cp2, cp3 = st.columns([1,4,1])
             with cp1: 
                 if st.button("⬅️") and st.session_state.page_number > 1: st.session_state.page_number -= 1
             with cp3:
                 if st.button("➡️") and st.session_state.page_number < total_pages: st.session_state.page_number += 1
             with cp2:
-                st.markdown(f"<div style='text-align:center'>Pág {st.session_state.page_number} de {total_pages} ({total_rows} total)</div>", unsafe_allow_html=True)
-                
-            idx_start = (st.session_state.page_number - 1) * ITEMS_PER_PAGE
-            idx_end = idx_start + ITEMS_PER_PAGE
-            df_page = df.iloc[idx_start:idx_end]
+                st.markdown(f"<div style='text-align:center'>Pág {st.session_state.page_number}/{total_pages} ({total_rows} total)</div>", unsafe_allow_html=True)
             
-            # Modified Data Editor (Replaced "Ver" with "Similitud")
+            idx_start = (st.session_state.page_number - 1) * ITEMS_PER_PAGE
+            df_page = df.iloc[idx_start : idx_start + ITEMS_PER_PAGE]
+            
             edited = st.data_editor(
                 df_page,
                 column_order=["Similitud","Web","CodigoExterno","Nombre","EstadoTiempo","FechaCierre","Categoría","Palabra Clave","Ignorar","Guardar"],
@@ -554,26 +514,16 @@ def main():
                     "Web": st.column_config.LinkColumn("🔗", width="small", display_text="🔗"),
                     "Ignorar": st.column_config.CheckboxColumn("❌", width="small"),
                     "Guardar": st.column_config.CheckboxColumn("💾", width="small"),
-                    
-                    # New AI Score Column
                     "Similitud": st.column_config.ProgressColumn(
-                        "Relevancia",
-                        help="Coincidencia semántica con IDIEM",
-                        format="%.0f%%",
-                        min_value=0,
-                        max_value=1,
+                        "Relevancia", format="%.0f%%", min_value=0, max_value=1,
+                        help="Coincidencia ponderada de términos clave"
                     ),
-                    
-                    "FechaPublicacion": st.column_config.DateColumn("Publicado", format="DD/MM/YYYY"),
                     "FechaCierre": st.column_config.DateColumn("Cierre", format="DD/MM/YYYY"),
                 },
                 hide_index=True,
                 height=700,
                 key=f"editor_{st.session_state.page_number}"
             )
-            
-            # Row selection logic (Implicit by "Guardar" or via manual selection event if enabled)
-            # Since we removed "Ver", we check if user wants to save
             
             c_a1, c_a2 = st.columns(2)
             with c_a1:
@@ -585,39 +535,29 @@ def main():
                     rows = edited[edited["Ignorar"]]
                     for _, r in rows.iterrows(): ignore_tender(r['CodigoExterno'])
                     if not rows.empty: 
-                        st.toast("Ocultados. Recarga para actualizar.", icon="🗑️")
-                        time.sleep(1); st.rerun()
+                        st.toast("Ocultados.", icon="🗑️"); time.sleep(1); st.rerun()
         else:
             st.info("Sin resultados.")
 
-    # Tab 2: Audit
     with t_audit:
         if 'audit_data' in st.session_state:
-            df_a = st.session_state.audit_data
-            f_status = st.multiselect("Filtrar:", df_a['Estado_Audit'].unique(), default=df_a['Estado_Audit'].unique())
-            st.dataframe(df_a[df_a['Estado_Audit'].isin(f_status)], use_container_width=True)
+            st.dataframe(st.session_state.audit_data, use_container_width=True)
 
-    # Tab 3: Saved
     with t_sav:
         saved = get_saved()
-        if not saved.empty:
-            st.dataframe(saved)
+        if not saved.empty: st.dataframe(saved)
         else: st.info("No hay guardados")
 
-    # Details Sidebar
     with st.sidebar:
-        # Since we removed "Ver", we can show details for the first "Guardar" item or use st.dataframe selection if needed.
-        # For now, we keep the structure if 'selected_tender' is populated manually or we can default to top result
-        st.info("💡 Consejo: Usa la barra de Relevancia para priorizar.")
-        
+        st.info("💡 La barra 'Relevancia' ahora usa conteo de términos ponderados (TF-IDF). Es rápido y no sobrecarga el servidor.")
         st.divider()
-        st.header("🛡️ Lista Negra")
         ign = get_ignored_set()
         if ign:
-            st.write(f"{len(ign)} ocultos.")
-            to_restore = st.selectbox("Restaurar ID", list(ign))
-            if st.button("Restaurar"):
-                restore_tender(to_restore)
+            if st.button("Restaurar Ocultos"):
+                conn = sqlite3.connect(DB_FILE)
+                conn.execute("DELETE FROM ignorados")
+                conn.commit()
+                conn.close()
                 st.rerun()
 
 if __name__ == "__main__":
