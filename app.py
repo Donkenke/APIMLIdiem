@@ -131,11 +131,11 @@ SCORING_RULES = {
     "geotecn": 10, "mecanica de suelo": 10, "calicata": 10, "sondaje": 10,
     "laboratorio": 10, "ensayo": 10, "hormigon": 10, "asfalto": 10,
     "forense": 10, "peritaje": 10,
-    "ito ": 8, "inspeccion": 6, "supervision": 6, 
+    "ito ": 8, "inspeccion": 8, "supervision": 6, 
     "topograf": 6, "mensura": 6, "fotogramet": 6,
     "huella de carbono": 8, "sustentab": 7, "eficiencia energetica": 7,
     "acero": 8, "estructural": 6, "sismico": 6,
-    "ingenieria": 2, "estudio": 2, "consultoria": 2, "diseño": 2, 
+    "ingenieria": 8, "estudio": 8, "consultoria": 10, "diseño": 10, 
     "proyecto": 1, "obra": 1, "edificacion": 2,
     "arriendo": -5, "compra de": -2, "suministro": -2, "catering": -10, 
     "aseo": -10, "vigilancia": -10, "transporte": -5
@@ -510,7 +510,7 @@ def main():
             
             edited = st.data_editor(
                 df_page,
-                column_order=["Web", "CodigoExterno", "Nombre", "Organismo", "Unidad", "EstadoTiempo", "FechaPublicacion", "FechaCierre", "Categoría", "Ignorar", "Guardar", "Similitud"],
+                column_order=["Web", "CodigoExterno", "Nombre", "Organismo", "Unidad", "EstadoTiempo", "FechaPublicacion", "FechaCierre", "Categoría", "Palabra Clave", "Ignorar", "Guardar", "Similitud"],
                 column_config={
                     "Web": st.column_config.LinkColumn("🔗", width="small", display_text="🔗"),
                     "CodigoExterno": st.column_config.TextColumn("ID", width="medium"),
