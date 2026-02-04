@@ -7,14 +7,18 @@ import sqlite3
 import time
 import math
 from datetime import datetime, timedelta
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 
 # --- CONFIGURATION ---
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-st.set_page_config(page_title="Monitor de Licitaciones Audit", page_icon="🏗️", layout="wide")
+
+# Page setup
+st.set_page_config(page_title="Monitor de Licitaciones Pro", page_icon="🏗️", layout="wide")
 
 # Constants
 BASE_URL = "https://api.mercadopublico.cl/servicios/v1/publico"
-DB_FILE = "licitaciones_v2.db" # Changed DB name to ensure fresh start
+DB_FILE = "licitaciones_v3.db" # Changed DB to force refresh structure
 ITEMS_PER_PAGE = 50 
 
 # --- KEYWORD MAPPING ---
@@ -195,36 +199,64 @@ def save_cache(code, data):
         conn.commit(); conn.close()
     except: pass
 
-@st.cache_data(ttl=300) # Short cache for summaries to allow refreshing
+def get_api_session():
+    """Creates a robust session with Retries and User-Agent."""
+    session = requests.Session()
+    
+    # 1. User Agent Spoofing (Looks like a Browser)
+    session.headers.update({
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Accept": "application/json"
+    })
+    
+    # 2. Retry Strategy (Handles 500, 502, 503 errors automatically)
+    retry_strategy = Retry(
+        total=3,  # Retry 3 times
+        backoff_factor=1,  # Wait 1s, then 2s, etc.
+        status_forcelist=[429, 500, 502, 503, 504],
+        allowed_methods=["HEAD", "GET", "OPTIONS"]
+    )
+    adapter = HTTPAdapter(max_retries=retry_strategy)
+    session.mount("https://", adapter)
+    session.mount("http://", adapter)
+    
+    return session
+
+@st.cache_data(ttl=300) 
 def fetch_summaries_raw(start_date, end_date, ticket):
     results = []
     errors = []
     delta = (end_date - start_date).days + 1
-    session = requests.Session()
+    
+    session = get_api_session() # Use robust session
     
     for i in range(delta):
         d = start_date + timedelta(days=i)
         d_str = d.strftime("%d%m%Y")
         url = f"{BASE_URL}/licitaciones.json?fecha={d_str}&ticket={ticket}"
         try:
-            r = session.get(url, verify=False, timeout=10)
+            # Increased timeout slightly
+            r = session.get(url, verify=False, timeout=15)
             if r.status_code == 200:
                 js = r.json()
                 items = js.get('Listado', [])
-                # Add date fetched to item for debugging
                 for item in items: item['_fecha_origen'] = d_str 
                 results.extend(items)
             else:
                 errors.append(f"Error {r.status_code} en {d_str}")
         except Exception as e:
-            errors.append(f"Fallo conexión en {d_str}: {e}")
+            errors.append(f"Fallo conexión en {d_str}: {str(e)}")
+            
+        # Small sleep between dates to avoid aggressive throttling
+        time.sleep(0.3)
             
     return results, errors
 
 def fetch_detail_live(code, ticket):
     try:
+        session = get_api_session()
         url = f"{BASE_URL}/licitaciones.json?codigo={code}&ticket={ticket}"
-        r = requests.get(url, verify=False, timeout=8)
+        r = session.get(url, verify=False, timeout=15)
         if r.status_code == 200:
             js = r.json()
             if js.get('Listado'): return js['Listado'][0]
@@ -258,7 +290,7 @@ def main():
     if 'page_number' not in st.session_state: st.session_state.page_number = 1
     
     ticket = st.secrets.get("MP_TICKET")
-    st.title("🏗️ Monitor de Licitaciones (Audit Mode)")
+    st.title("🏗️ Monitor de Licitaciones (Pro Audit)")
     
     if not ticket: st.warning("Falta Ticket"); st.stop()
 
@@ -357,7 +389,6 @@ def main():
         final_list = []
         
         if candidates:
-            # Progress bar for details
             pbar = st.progress(0)
             status_txt = st.empty()
             
@@ -377,7 +408,7 @@ def main():
                 if not detail:
                     detail = fetch_detail_live(code, ticket)
                     if detail: save_cache(code, detail)
-                    time.sleep(0.05) # Polite throttle
+                    time.sleep(0.1) # Throttled for safety
                 
                 # Update Audit based on Detail
                 if detail:
@@ -418,7 +449,13 @@ def main():
                             if l['ID'] == code: 
                                 l['Estado_Audit'] = "Descartado"
                                 l['Motivo'] = f"Vencida en Detalle ({d_cierre})"
-                
+                else:
+                    # Detail fetch failed, keep audit as candidate but warn
+                     for l in audit_logs:
+                            if l['ID'] == code: 
+                                l['Estado_Audit'] = "Error API"
+                                l['Motivo'] = "No se pudo descargar detalle"
+
                 pbar.progress((idx+1)/len(candidates))
                 status_txt.caption(f"Verificando detalles {idx+1}/{len(candidates)}")
             
