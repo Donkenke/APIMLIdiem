@@ -332,6 +332,13 @@ def process_detail_data(raw_data, summary_cat, summary_kw):
 # --- MAIN APP ---
 def main():
     init_db()
+    
+    # -----------------------------------------------
+    # FIX: Initialize Page Number at start to prevent crash
+    if 'page_number' not in st.session_state:
+        st.session_state.page_number = 1
+    # -----------------------------------------------
+
     ticket = get_ticket()
     
     st.title("🏗️ Monitor de Licitaciones Pro")
@@ -392,16 +399,11 @@ def main():
         cached_data_map = get_cached_details(codes_to_process)
         
         final_list = []
-        missing_codes = [c for c in codes_to_process if c not in cached_data_map]
         
         # 4. Processing Loop (Cache Hit vs API Miss)
         if candidates:
             info_box = st.empty()
             p_bar = st.progress(0)
-            
-            # Logic: We process ALL candidates. 
-            # If in cache -> Load instant. 
-            # If missing -> Fetch API & Save.
             
             api_calls = 0
             for idx, item in enumerate(candidates):
@@ -437,7 +439,7 @@ def main():
                     api_calls += 1
                     time.sleep(0.05) # Polite delay
                 
-                # UI Update (Throttle updates to every 5 items for speed)
+                # UI Update (Throttle updates)
                 if idx % 5 == 0 or idx == len(candidates)-1:
                     pct = (idx + 1) / len(candidates)
                     p_bar.progress(pct)
@@ -447,7 +449,8 @@ def main():
             info_box.empty()
             
             if api_calls > 0:
-                st.toast(f"📥 Se descargaron {api_calls} licitaciones nuevas.", icon="cloud")
+                # FIX: Changed icon from 'cloud' to emoji '☁️'
+                st.toast(f"📥 Se descargaron {api_calls} licitaciones nuevas.", icon="☁️")
         
         # 5. Store Results
         df = pd.DataFrame(final_list)
@@ -518,7 +521,7 @@ def main():
                 hide_index=True, 
                 width="stretch", 
                 height=700,
-                key=f"editor_page_{st.session_state.page_number}" # Unique key per page
+                key=f"editor_page_{st.session_state.page_number}"
             )
             
             # --- ACTIONS ---
