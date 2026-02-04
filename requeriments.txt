@@ -4,4 +4,6 @@ requests
 urllib3
 sqlalchemy
 
+sentence-transformers
+scikit-learn
 
