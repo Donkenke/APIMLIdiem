@@ -15,120 +15,43 @@ from urllib3.util.retry import Retry
 
 # --- CONFIGURATION ---
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-st.set_page_config(page_title="Monitor IDIEM Pro", page_icon="🏗️", layout="wide")
+st.set_page_config(page_title="Monitor IDIEM Pro", page_icon="⚡", layout="wide")
 
 # Constants
 BASE_URL = "https://api.mercadopublico.cl/servicios/v1/publico"
-DB_FILE = "licitaciones_v9_ui_fix.db" 
+DB_FILE = "licitaciones_v11_fast_ui.db" 
 ITEMS_PER_PAGE = 50 
-# Ola 1: Velocidad normal
-MAX_WORKERS_WAVE_1 = 4 
-# Ola 2: Velocidad reducida para asegurar éxito
-MAX_WORKERS_WAVE_2 = 2
+MAX_WORKERS = 5 
 
-# --- KEYWORD MAPPING (IDIEM) ---
-KEYWORD_MAPPING = {
-  "Asesoría inspección": "Inspección Técnica y Supervisión",
-  "AIF": "Inspección Técnica y Supervisión",
-  "AIT": "Inspección Técnica y Supervisión",
-  "ATIF": "Inspección Técnica y Supervisión",
-  "ATOD": "Inspección Técnica y Supervisión",
-  "AFOS": "Inspección Técnica y Supervisión",
-  "ATO": "Inspección Técnica y Supervisión",
-  "ITO": "Inspección Técnica y Supervisión",
-  "Supervisión Construcción Pozos": "Inspección Técnica y Supervisión",
-  "Estudio Ingeniería": "Ingeniería, Geotecnia y Laboratorio",
-  "Estructural": "Ingeniería, Geotecnia y Laboratorio",
-  "Ingeniería Conceptual": "Ingeniería, Geotecnia y Laboratorio",
-  "Evaluación Estructural": "Ingeniería, Geotecnia y Laboratorio",
-  "Mecánica Suelos": "Ingeniería, Geotecnia y Laboratorio",
-  "Geológico": "Ingeniería, Geotecnia y Laboratorio",
-  "Geotécnico": "Ingeniería, Geotecnia y Laboratorio",
-  "Hidrogeológico": "Ingeniería, Geotecnia y Laboratorio",
-  "Ensayos": "Ingeniería, Geotecnia y Laboratorio",
-  "Topográfico": "Topografía y Levantamientos",
-  "Topografía": "Topografía y Levantamientos",
-  "Levantamiento": "Topografía y Levantamientos",
-  "Levantamiento Catastro": "Topografía y Levantamientos",
-  "Monitoreo y Levantamiento de Condiciones Existentes": "Topografía y Levantamientos",
-  "Aerofotogrametría": "Topografía y Levantamientos",
-  "Aerofotogramétrico": "Topografía y Levantamientos",
-  "Levantamiento crítico": "Topografía y Levantamientos",
-  "Huella Carbono": "Sustentabilidad y Medio Ambiente",
-  "Cambio climático": "Sustentabilidad y Medio Ambiente",
-  "PACC": "Sustentabilidad y Medio Ambiente",
-  "PCC": "Sustentabilidad y Medio Ambiente",
-  "Gases Efecto Invernadero": "Sustentabilidad y Medio Ambiente",
-  "Actualización de la Estrategia Climática Nacional": "Sustentabilidad y Medio Ambiente",
-  "Actualización del NDC": "Sustentabilidad y Medio Ambiente",
-  "Metodología de cálculo de huella de carbono": "Sustentabilidad y Medio Ambiente",
-  "Energética": "Sustentabilidad y Medio Ambiente",
-  "Sustentabilidad": "Sustentabilidad y Medio Ambiente",
-  "Sustentable": "Sustentabilidad y Medio Ambiente",
-  "Ruido Acústico": "Sustentabilidad y Medio Ambiente",
-  "Ruido Ambiental": "Sustentabilidad y Medio Ambiente",
-  "Riles": "Sustentabilidad y Medio Ambiente",
-  "Aguas Servidas": "Sustentabilidad y Medio Ambiente",
-  "Reclamaciones": "Gestión de Contratos y Forense",
-  "Revisión Contratos Obras": "Gestión de Contratos y Forense",
-  "Revisión Contratos Operación": "Gestión de Contratos y Forense",
-  "Revisión Ofertas": "Gestión de Contratos y Forense",
-  "Revisión Bases": "Gestión de Contratos y Forense",
-  "Auditoría Forense": "Gestión de Contratos y Forense",
-  "Análisis Costo": "Gestión de Contratos y Forense",
-  "Pérdida de productividad": "Gestión de Contratos y Forense",
-  "Peritajes Forenses": "Gestión de Contratos y Forense",
-  "Incendio Fuego": "Gestión de Contratos y Forense",
-  "Riesgo": "Gestión de Contratos y Forense",
-  "Estudio Vibraciones": "Gestión de Contratos y Forense",
-  "Arquitectura": "Arquitectura y Edificación",
-  "Elaboración Anteproyecto": "Arquitectura y Edificación",
-  "Estudio de cabida": "Arquitectura y Edificación",
-  "Estudio de Accesibilidad Universal": "Arquitectura y Edificación",
-  "Patrimonio": "Arquitectura y Edificación",
-  "Monumento Histórico": "Arquitectura y Edificación",
-  "Diseño Cesfam": "Arquitectura y Edificación",
-  "Rehabilitación Cesfam": "Arquitectura y Edificación",
-  "Aeródromo": "Infraestructura y Estudios Básicos",
-  "Aeropuerto": "Infraestructura y Estudios Básicos",
-  "Aeroportuario": "Infraestructura y Estudios Básicos",
-  "Túnel": "Infraestructura y Estudios Básicos",
-  "Vialidad": "Infraestructura y Estudios Básicos",
-  "Prefactibilidad": "Infraestructura y Estudios Básicos",
-  "Plan Inversional": "Infraestructura y Estudios Básicos",
-  "Estudio Demanda": "Infraestructura y Estudios Básicos",
-  "Estudio Básico": "Infraestructura y Estudios Básicos",
-  "Obras de Emergencia": "Infraestructura y Estudios Básicos",
-  "Riego": "Infraestructura y Estudios Básicos",
-  "Ministerio de Vivienda": "Mandantes Clave",
-  "Minvu": "Mandantes Clave",
-  "Servicio de Vivienda": "Mandantes Clave",
-  "Serviu": "Mandantes Clave",
-  "Ministerio de Educación": "Mandantes Clave",
-  "Mineduc": "Mandantes Clave",
-  "Dirección Educación Pública": "Mandantes Clave",
-  "Servicios Locales Educacionales": "Mandantes Clave",
-  "Ministerio de Salud": "Mandantes Clave",
-  "Servicio de Salud": "Mandantes Clave",
-  "Dirección de Arquitectura": "Mandantes Clave",
-  "Superintendencia de Infraestructura": "Mandantes Clave",
-  "Metropolitana": "Mandantes Clave",
-  "Regional": "Mandantes Clave"
+# --- SMART CATEGORIZATION (Raíces Inteligentes) ---
+SMART_CATEGORIES = {
+    "Inspección Técnica": ["inspeccion", " ito ", " ito.", "aif", "ait", "atod", "ato ", "supervision"],
+    "Ingeniería y Lab": ["geotecn", "mecanica de suelo", "laboratorio", "ensayo", "hormigon", "asfalto", "acero", "estructural", "ingenieria", "geologia", "sondaje", "calicata"],
+    "Topografía": ["topograf", "mensura", "fotogramet", "levantamiento", "geodesic", "cartograf"],
+    "Sustentabilidad": ["sustentab", "huella de carbono", "climat", "emision", "energetica", "ambiental", "riles", "acustic", "ruido"],
+    "Gestión y Forense": ["forense", "peritaje", "reclamacion", "contrato", "bases", "costo", "vibracion"],
+    "Arquitectura": ["arquitectura", "diseño", "anteproyecto", "patrimonio", "monumento", "cesfam"],
+    "Infraestructura": ["vialidad", "pavimento", "aerodromo", "aeropuerto", "tunel", "puente", "hidraulic", "riego"],
+    "Mandantes Clave": ["minvu", "serviu", "mop", "vialidad", "arquitectura", "salud", "hospital", "educacion", "junji"]
 }
 
-# --- SCORING RULES (Pure Python) ---
+# --- SCORING RULES (Puntaje de Relevancia) ---
 SCORING_RULES = {
-    "geotecn": 10, "mecanica de suelos": 10, "calicata": 10, "sondaje": 10,
-    "laboratorio": 10, "ensayo": 10, "hormigon": 10, "asfalto": 10, "acero": 8,
-    "forense": 10, "peritaje": 10, "ato": 10,
-    "ito ": 6, "ito.": 10, "inspeccion tecnica": 10, "supervision": 10, 
-    "topograf": 6, "levantamiento": 6, "mensura": 5, "fotogrametr": 6,
-    "huella de carbono": 7, "sustentab": 6, "eficiencia energetica": 6,
-    "estructural": 10, "calculo": 5, "sismico": 6,
-    "ingenieria": 10, "estudio": 10, "consultoria": 10, "diseño": 10, 
-    "proyecto": 5, "obra civil": 10, "edificacion": 10, "infraestructura": 10,
+    # TIER 1: CORE (10 pts)
+    "geotecn": 10, "mecanica de suelo": 10, "calicata": 10, "sondaje": 10,
+    "laboratorio": 10, "ensayo": 10, "hormigon": 10, "asfalto": 10,
+    "forense": 10, "peritaje": 10,
+    # TIER 2: HIGH (6-8 pts)
+    "ito ": 8, "inspeccion": 6, "supervision": 6, 
+    "topograf": 6, "mensura": 6, "fotogramet": 6,
+    "huella de carbono": 8, "sustentab": 7, "eficiencia energetica": 7,
+    "acero": 8, "estructural": 6, "sismico": 6,
+    # TIER 3: CONTEXT (2 pts)
+    "ingenieria": 2, "estudio": 2, "consultoria": 2, "diseño": 2, 
+    "proyecto": 1, "obra": 1, "edificacion": 2,
+    # PENALIZACIONES (Filtros Negativos)
     "arriendo": -5, "compra de": -2, "suministro": -2, "catering": -10, 
-    "aseo": -10, "vigilancia": -10, "dental":-5
+    "aseo": -10, "vigilancia": -10, "transporte": -5, "productora": -10
 }
 
 # --- DATABASE ---
@@ -240,7 +163,7 @@ def fetch_summaries_raw(start_date, end_date, ticket):
         d_str = d.strftime("%d%m%Y")
         url = f"{BASE_URL}/licitaciones.json?fecha={d_str}&ticket={ticket}"
         try:
-            r = session.get(url, verify=False, timeout=30)
+            r = session.get(url, verify=False, timeout=15)
             if r.status_code == 200:
                 js = r.json()
                 items = js.get('Listado', [])
@@ -250,17 +173,16 @@ def fetch_summaries_raw(start_date, end_date, ticket):
                 errors.append(f"Error {r.status_code} en {d_str}")
         except Exception as e:
             errors.append(f"Fallo conexión en {d_str}: {str(e)}")
-        time.sleep(0.5) 
+        time.sleep(0.1) 
             
     return results, errors
 
 def fetch_detail_worker(args):
     code, ticket = args
-    time.sleep(random.uniform(0.1, 0.4)) 
     try:
         session = get_api_session() 
         url = f"{BASE_URL}/licitaciones.json?codigo={code}&ticket={ticket}"
-        r = session.get(url, verify=False, timeout=30)
+        r = session.get(url, verify=False, timeout=20)
         if r.status_code == 200:
             js = r.json()
             if js.get('Listado'):
@@ -268,7 +190,20 @@ def fetch_detail_worker(args):
     except: pass
     return code, None
 
-# --- HEURISTIC SCORING ---
+# --- NEW SMART CATEGORIZATION LOGIC ---
+def get_cat_smart(txt):
+    """
+    Categoriza usando raíces. Más rápido y robusto.
+    """
+    if not txt: return None, None
+    tl = txt.lower()
+    for category, roots in SMART_CATEGORIES.items():
+        for root in roots:
+            if root in tl:
+                return category, root 
+    return None, None
+
+# --- SCORING LOGIC ---
 def calculate_relevance_heuristic(tenders_list):
     scores = []
     MAX_SCORE_THRESHOLD = 25.0 
@@ -293,13 +228,6 @@ def parse_date(d):
         except: continue
     return None
 
-def get_cat(txt):
-    if not txt: return None, None
-    tl = txt.lower()
-    for kw, cat in KEYWORD_MAPPING.items():
-        if kw.lower() in tl: return cat, kw
-    return None, None
-
 def format_clp(v):
     try: return "${:,.0f}".format(float(v)).replace(",", ".")
     except: return "$0"
@@ -310,7 +238,7 @@ def main():
     if 'page_number' not in st.session_state: st.session_state.page_number = 1
     
     ticket = st.secrets.get("MP_TICKET")
-    st.title("🏗️ Monitor IDIEM Pro")
+    st.title("⚡ Monitor IDIEM Pro (Modo Rápido)")
     
     if not ticket: 
         st.warning("Falta Ticket (MP_TICKET en secrets)")
@@ -329,7 +257,8 @@ def main():
             if 'search_results' in st.session_state: del st.session_state['search_results']
             st.rerun()
     with c3:
-        st.metric("Keywords", len(KEYWORD_MAPPING))
+        total_roots = sum(len(v) for v in SMART_CATEGORIES.values())
+        st.metric("Raíces Inteligentes", total_roots)
 
     t_res, t_audit, t_sav = st.tabs(["🔍 Resultados", "🕵️ Auditoría", "💾 Guardados"])
 
@@ -338,7 +267,7 @@ def main():
         else: start = end = dr
         ignored_set = get_ignored_set()
         
-        with st.spinner("1. Obteniendo listado maestro..."):
+        with st.spinner("1. Descargando resúmenes..."):
             raw_items, fetch_errors = fetch_summaries_raw(start, end, ticket)
             
         if fetch_errors:
@@ -349,7 +278,7 @@ def main():
         codes_needed_for_api = []
         cached_map = {}
 
-        # 1. Filter
+        # 1. SMART FILTER
         for item in raw_items:
             code = item.get('CodigoExterno')
             name = item.get('Nombre', '')
@@ -363,10 +292,11 @@ def main():
                 continue
 
             full_txt = f"{name} {desc}"
-            cat, kw = get_cat(full_txt)
+            # SMART CATEGORIZATION
+            cat, kw = get_cat_smart(full_txt)
             
             if not cat:
-                log["Estado_Audit"], log["Motivo"] = "Descartado", "Sin Keyword"
+                log["Estado_Audit"], log["Motivo"] = "Descartado", "Sin Keyword Relevante"
                 audit_logs.append(log)
                 continue
             
@@ -387,44 +317,22 @@ def main():
             if c not in cached_map:
                 codes_needed_for_api.append(c)
 
-        # 3. Parallel Fetching with RECOVERY WAVE
+        # 3. Parallel Fetching (ORIGINAL SIMPLE LOGIC)
         if codes_needed_for_api:
             st.info(f"Descargando {len(codes_needed_for_api)} detalles...")
-            
-            # --- WAVE 1 ---
-            failed_in_wave_1 = []
-            results_fetched = 0
             pbar = st.progress(0)
-            
             tasks = [(code, ticket) for code in codes_needed_for_api]
+            results_fetched = 0
             
-            with concurrent.futures.ThreadPoolExecutor(max_workers=MAX_WORKERS_WAVE_1) as executor:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
                 future_to_code = {executor.submit(fetch_detail_worker, task): task[0] for task in tasks}
                 for future in concurrent.futures.as_completed(future_to_code):
                     code_done, detail_data = future.result()
                     results_fetched += 1
-                    
                     if detail_data:
                         save_cache(code_done, detail_data)
                         cached_map[code_done] = json.dumps(detail_data)
-                    else:
-                        failed_in_wave_1.append(code_done)
-                    
                     pbar.progress(results_fetched / len(codes_needed_for_api))
-            
-            # --- WAVE 2 ---
-            if failed_in_wave_1:
-                st.toast(f"Ola 1: {len(failed_in_wave_1)} pendientes. Reintentando...", icon="🚑")
-                time.sleep(2) 
-                tasks_retry = [(code, ticket) for code in failed_in_wave_1]
-                with concurrent.futures.ThreadPoolExecutor(max_workers=MAX_WORKERS_WAVE_2) as executor:
-                    future_to_code = {executor.submit(fetch_detail_worker, task): task[0] for task in tasks_retry}
-                    for future in concurrent.futures.as_completed(future_to_code):
-                        code_done, detail_data = future.result()
-                        if detail_data:
-                            save_cache(code_done, detail_data)
-                            cached_map[code_done] = json.dumps(detail_data)
-                            st.toast(f"Recuperada: {code_done}", icon="✅")
             pbar.empty()
         
         # 4. Final Processing
@@ -451,7 +359,6 @@ def main():
                         "Unidad": str(detail.get('Comprador',{}).get('NombreUnidad','')).title(),
                         "FechaPublicacion": parse_date(detail.get('Fechas',{}).get('FechaPublicacion')),
                         "FechaCierre": d_cierre,
-                        "MontoStr": format_clp(detail.get('MontoEstimado',0)),
                         "Descripcion": detail.get('Descripcion',''),
                         "Categoría": cand['_cat'],
                         "Palabra Clave": cand['_kw'],
@@ -467,7 +374,7 @@ def main():
                         if l['ID'] == code: l['Estado_Audit'], l['Motivo'] = "Descartado", "Vencida (Detalle)"
             else:
                  for l in audit_logs:
-                     if l['ID'] == code: l['Estado_Audit'], l['Motivo'] = "Error API", "Fallo tras 2 intentos"
+                     if l['ID'] == code: l['Estado_Audit'], l['Motivo'] = "Error API", "Fallo descarga"
 
         if final_list:
             scores = calculate_relevance_heuristic(final_list)
@@ -478,12 +385,12 @@ def main():
         st.session_state.audit_data = pd.DataFrame(audit_logs)
         st.session_state.page_number = 1
 
-    # RENDERING
+    # RENDERING (UPDATED UI)
     with t_res:
         if 'search_results' in st.session_state and not st.session_state.search_results.empty:
             df = st.session_state.search_results.copy()
             
-            # --- GLOBAL SORT CONTROL (Fixes Pagination Sort Issue) ---
+            # --- GLOBAL SORT ---
             c_sort1, c_sort2 = st.columns([3, 1])
             with c_sort1:
                 st.caption(f"Mostrando {len(df)} licitaciones")
@@ -503,38 +410,33 @@ def main():
             df["Guardar"] = False
             df["Ignorar"] = False
             
-            # Pagination Logic
+            # Pagination
             total_rows = len(df)
             total_pages = math.ceil(total_rows / ITEMS_PER_PAGE)
             
-            # --- COMPACT NAVIGATION (2026 Standard) ---
-            # Centered with tight layout
+            # --- COMPACT NAV ---
             col_nav1, col_nav2, col_nav3, col_nav4, col_nav5 = st.columns([4, 1, 3, 1, 4])
-            
             with col_nav2:
                 if st.button("◀", key="prev", use_container_width=True) and st.session_state.page_number > 1: 
                     st.session_state.page_number -= 1
-            
             with col_nav3:
                 st.markdown(f"<div style='text-align:center; padding-top:5px; font-weight:bold;'>{st.session_state.page_number} / {total_pages}</div>", unsafe_allow_html=True)
-            
             with col_nav4:
                 if st.button("▶", key="next", use_container_width=True) and st.session_state.page_number < total_pages: 
                     st.session_state.page_number += 1
             
-            # Slicing for Display
             idx_start = (st.session_state.page_number - 1) * ITEMS_PER_PAGE
             df_page = df.iloc[idx_start : idx_start + ITEMS_PER_PAGE]
             
-            # --- FINAL TABLE CONFIG ---
+            # --- TABLE ---
             edited = st.data_editor(
                 df_page,
                 column_order=[
                     "Web", "CodigoExterno", "Nombre", 
-                    "Organismo", "Unidad", # Added back
+                    "Organismo", "Unidad", 
                     "EstadoTiempo", "FechaPublicacion", "FechaCierre", 
                     "Categoría", "Ignorar", "Guardar", 
-                    "Similitud" # Last column
+                    "Similitud"
                 ],
                 column_config={
                     "Web": st.column_config.LinkColumn("🔗", width="small", display_text="🔗"),
@@ -545,10 +447,7 @@ def main():
                     "Ignorar": st.column_config.CheckboxColumn("🗑️", width="small", default=False),
                     "Guardar": st.column_config.CheckboxColumn("💾", width="small", default=False),
                     "Similitud": st.column_config.ProgressColumn(
-                        "Relevancia", 
-                        format=" ", # Hide text, just show bar
-                        min_value=0, max_value=1,
-                        width="medium"
+                        "Relevancia", format=" ", min_value=0, max_value=1, width="medium"
                     ),
                     "FechaPublicacion": st.column_config.DateColumn("Publicado", format="DD/MM/YY"),
                     "FechaCierre": st.column_config.DateColumn("Cierre", format="DD/MM/YY"),
@@ -558,7 +457,6 @@ def main():
                 key=f"editor_{st.session_state.page_number}"
             )
             
-            # Actions
             c_a1, c_a2 = st.columns(2)
             with c_a1:
                 if st.button("💾 Guardar Seleccionados", use_container_width=True):
@@ -585,8 +483,7 @@ def main():
         else: st.info("No hay guardados")
 
     with st.sidebar:
-        st.success("✅ Sistema IDIEM Pro Activo")
-        st.info("La navegación ahora es centralizada y el ordenamiento aplica a todo el conjunto de datos.")
+        st.success("✅ IDIEM Smart Core Activo (Fast Mode)")
         st.divider()
         ign = get_ignored_set()
         if ign:
