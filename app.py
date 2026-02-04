@@ -435,7 +435,7 @@ def main():
                     "Web", "CodigoExterno", "Nombre", 
                     "Organismo", "Unidad", 
                     "EstadoTiempo", "FechaPublicacion", "FechaCierre", 
-                    "Categoría", "Ignorar", "Guardar", 
+                    "Categoría", "Palabra Clave", "Ignorar", "Guardar", 
                     "Similitud"
                 ],
                 column_config={
