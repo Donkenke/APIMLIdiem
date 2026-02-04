@@ -120,15 +120,15 @@ KEYWORD_MAPPING = {
 SCORING_RULES = {
     "geotecn": 10, "mecanica de suelos": 10, "calicata": 10, "sondaje": 10,
     "laboratorio": 10, "ensayo": 10, "hormigon": 10, "asfalto": 10, "acero": 8,
-    "forense": 10, "peritaje": 10, "reclamacion": 8,
-    "ito ": 6, "ito.": 6, "inspeccion tecnica": 6, "supervision": 5, 
+    "forense": 10, "peritaje": 10, "ato": 10,
+    "ito ": 6, "ito.": 10, "inspeccion tecnica": 10, "supervision": 10, 
     "topograf": 6, "levantamiento": 6, "mensura": 5, "fotogrametr": 6,
     "huella de carbono": 7, "sustentab": 6, "eficiencia energetica": 6,
-    "estructural": 6, "calculo": 5, "sismico": 6,
-    "ingenieria": 2, "estudio": 2, "consultoria": 2, "diseño": 2, 
-    "proyecto": 1, "obra civil": 2, "edificacion": 2, "infraestructura": 2,
+    "estructural": 10, "calculo": 5, "sismico": 6,
+    "ingenieria": 10, "estudio": 10, "consultoria": 10, "diseño": 10, 
+    "proyecto": 5, "obra civil": 10, "edificacion": 10, "infraestructura": 10,
     "arriendo": -5, "compra de": -2, "suministro": -2, "catering": -10, 
-    "aseo": -10, "vigilancia": -10, "transporte": -5
+    "aseo": -10, "vigilancia": -10, "dental":-5
 }
 
 # --- DATABASE ---
