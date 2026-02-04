@@ -9,21 +9,23 @@ import math
 import concurrent.futures
 import numpy as np
 import random
+import re # IMPORTANTE: Para detectar palabras completas (ATO vs CONTRATO)
 from datetime import datetime, timedelta
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
-# --- CONFIGURACIÓN & SPEED HACKS ---
+# --- CONFIGURACIÓN & PRUDENCIA ---
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-st.set_page_config(page_title="Monitor IDIEM Pro (Filtro Flexible)", page_icon="🏗️", layout="wide")
+st.set_page_config(page_title="Monitor IDIEM Pro (Preciso)", page_icon="🏗️", layout="wide")
 
 # Constantes
 BASE_URL = "https://api.mercadopublico.cl/servicios/v1/publico"
-DB_FILE = "licitaciones_v14_flex.db" 
+DB_FILE = "licitaciones_v15_precise.db" 
 ITEMS_PER_PAGE = 50 
-MAX_WORKERS = 5 
+# Bajamos a 4 para ser más prudentes con la API y evitar bloqueos
+MAX_WORKERS = 4 
 
-# --- CEREBRO: KEYWORD MAPPING (Tu lista oficial) ---
+# --- CEREBRO: KEYWORD MAPPING ---
 KEYWORD_MAPPING = {
     # Inspección
     "Asesoría inspección": "Inspección Técnica y Supervisión",
@@ -126,16 +128,16 @@ KEYWORD_MAPPING = {
     "Superintendencia de Infraestructura": "Mandantes Clave"
 }
 
-# --- SCORING RULES (Para ordenar la tabla) ---
+# --- SCORING RULES ---
 SCORING_RULES = {
     "geotecn": 10, "mecanica de suelo": 10, "calicata": 10, "sondaje": 10,
     "laboratorio": 10, "ensayo": 10, "hormigon": 10, "asfalto": 10,
     "forense": 10, "peritaje": 10,
-    "ito ": 8, "inspeccion": 8, "supervision": 6, 
+    "ito ": 8, "inspeccion": 6, "supervision": 6, 
     "topograf": 6, "mensura": 6, "fotogramet": 6,
     "huella de carbono": 8, "sustentab": 7, "eficiencia energetica": 7,
     "acero": 8, "estructural": 6, "sismico": 6,
-    "ingenieria": 8, "estudio": 8, "consultoria": 10, "diseño": 10, 
+    "ingenieria": 2, "estudio": 2, "consultoria": 2, "diseño": 2, 
     "proyecto": 1, "obra": 1, "edificacion": 2,
     "arriendo": -5, "compra de": -2, "suministro": -2, "catering": -10, 
     "aseo": -10, "vigilancia": -10, "transporte": -5
@@ -202,7 +204,7 @@ def get_saved():
         return df
     except: return pd.DataFrame()
 
-# --- CACHE & API (MOTOR TURBO) ---
+# --- CACHE & API (PRUDENCIA) ---
 def get_cached_details(codigos):
     if not codigos: return {}
     conn = sqlite3.connect(DB_FILE)
@@ -222,14 +224,20 @@ def save_cache(code, data):
     except: pass
 
 def get_api_session():
+    """
+    Sesión equilibrada: verify=False para velocidad, pero con retry robusto.
+    """
     session = requests.Session()
     session.headers.update({
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
         "Accept": "application/json"
     })
-    session.verify = False  # Speed Hack
+    session.verify = False  # Mantenemos esto porque es el mayor cuello de botella
     retry_strategy = Retry(
-        total=2, backoff_factor=0.5, status_forcelist=[429, 500, 502, 503, 504], allowed_methods=["HEAD", "GET", "OPTIONS"]
+        total=3, # Aumentamos reintentos a 3
+        backoff_factor=1, # Espera 1s, 2s, 4s...
+        status_forcelist=[429, 500, 502, 503, 504],
+        allowed_methods=["HEAD", "GET", "OPTIONS"]
     )
     adapter = HTTPAdapter(max_retries=retry_strategy)
     session.mount("https://", adapter)
@@ -239,33 +247,43 @@ def get_api_session():
 @st.cache_data(ttl=300) 
 def fetch_summaries_raw(start_date, end_date, ticket):
     results = []
-    errors = []
+    failed_dates = [] # Para el debug
+    
     delta = (end_date - start_date).days + 1
     session = get_api_session()
+    
+    progress_text = st.empty()
     
     for i in range(delta):
         d = start_date + timedelta(days=i)
         d_str = d.strftime("%d%m%Y")
         url = f"{BASE_URL}/licitaciones.json?fecha={d_str}&ticket={ticket}"
+        
         try:
-            r = session.get(url, verify=False, timeout=10)
+            # PRUDENCIA: Timeout aumentado a 20s
+            r = session.get(url, verify=False, timeout=20) 
             if r.status_code == 200:
                 js = r.json()
                 items = js.get('Listado', [])
                 for item in items: item['_fecha_origen'] = d_str 
                 results.extend(items)
             else:
-                errors.append(f"Error {r.status_code} en {d_str}")
+                failed_dates.append(f"{d.strftime('%d/%m/%Y')} (Status {r.status_code})")
         except Exception as e:
-            errors.append(f"Fallo conexión en {d_str}: {str(e)}")
+            failed_dates.append(f"{d.strftime('%d/%m/%Y')} (Error Conexión)")
+        
+        # PRUDENCIA: Pequeña pausa para no saturar
+        time.sleep(0.1) 
             
-    return results, errors
+    return results, failed_dates
 
 def fetch_detail_worker(args):
     code, ticket = args
+    # PRUDENCIA: Jitter aleatorio
+    time.sleep(random.uniform(0.1, 0.3))
     try:
         url = f"{BASE_URL}/licitaciones.json?codigo={code}&ticket={ticket}"
-        r = requests.get(url, verify=False, timeout=15) 
+        r = requests.get(url, verify=False, timeout=20) # Timeout 20s
         if r.status_code == 200:
             js = r.json()
             if js.get('Listado'):
@@ -273,21 +291,35 @@ def fetch_detail_worker(args):
     except: pass
     return code, None
 
-# --- LOGIC: FLEXIBLE KEYWORD MATCH ---
-def get_cat(txt):
+# --- LOGIC: WHOLE WORD MATCH (REGEX) ---
+def get_cat_precise(txt):
     """
-    MODIFICADO: Ahora hace un 'Flexible Match'.
-    Verifica que TODAS las palabras de la keyword estén en el texto,
-    aunque estén separadas. 
-    Ej: "Diseño Cesfam" machea con "Diseño de Cesfam".
+    Busca PALABRAS COMPLETAS (\b).
+    Evita falsos positivos como:
+    - 'ATO' dentro de 'ContrATO'
+    - 'ITO' dentro de 'CircuITO'
+    Pero permite 'Diseño Cesfam' si están separadas.
     """
     if not txt: return None, None
     tl = txt.lower()
     
+    # Pre-compilar keywords mejoraría performance, pero en este volumen es despreciable
+    # y hacerlo aquí permite modificar KEYWORD_MAPPING en caliente si quisieras.
+    
     for kw, cat in KEYWORD_MAPPING.items():
         kw_parts = kw.lower().split()
-        # Verificamos si TODAS las partes están en el texto
-        if all(part in tl for part in kw_parts):
+        
+        # Estrategia: Verificar que TODAS las partes existen como PALABRA COMPLETA
+        all_parts_found = True
+        for part in kw_parts:
+            # \b = Límite de palabra. 
+            # re.escape limpia caracteres especiales por si acaso
+            pattern = r'\b' + re.escape(part) + r'\b'
+            if not re.search(pattern, tl):
+                all_parts_found = False
+                break
+        
+        if all_parts_found:
             return cat, kw
             
     return None, None
@@ -326,7 +358,7 @@ def main():
     if 'page_number' not in st.session_state: st.session_state.page_number = 1
     
     ticket = st.secrets.get("MP_TICKET")
-    st.title("🏗️ Monitor IDIEM Pro (Filtro Flexible)")
+    st.title("🏗️ Monitor IDIEM Pro (Preciso)")
     
     if not ticket: 
         st.warning("Falta Ticket (MP_TICKET en secrets)")
@@ -355,17 +387,21 @@ def main():
         ignored_set = get_ignored_set()
         
         with st.spinner("1. Descargando resúmenes..."):
-            raw_items, fetch_errors = fetch_summaries_raw(start, end, ticket)
+            # AHORA RECUPERAMOS LOS DIAS FALLIDOS
+            raw_items, failed_dates = fetch_summaries_raw(start, end, ticket)
             
-        if fetch_errors:
-            st.warning(f"Advertencia: {len(fetch_errors)} días con error.")
-
+        # DEBUG: Mostrar fechas fallidas si las hay
+        if failed_dates:
+            with st.expander(f"⚠️ Atención: Falló la descarga de {len(failed_dates)} días", expanded=True):
+                st.warning("La API de Mercado Público no respondió para estas fechas (posiblemente sin datos o error temporal):")
+                st.write(failed_dates)
+        
         audit_logs = []
         candidates = []
         codes_needed_for_api = []
         cached_map = {}
 
-        # 1. FILTRO FLEXIBLE
+        # 1. FILTRO PRECISO (REGEX)
         for item in raw_items:
             code = item.get('CodigoExterno')
             name = item.get('Nombre', '')
@@ -379,10 +415,12 @@ def main():
                 continue
 
             full_txt = f"{name} {desc}"
-            cat, kw = get_cat(full_txt)
+            
+            # --- USO DE LOGICA PRECISA (REGEX) ---
+            cat, kw = get_cat_precise(full_txt)
             
             if not cat:
-                log["Estado_Audit"], log["Motivo"] = "Descartado", "Sin Keyword"
+                log["Estado_Audit"], log["Motivo"] = "Descartado", "Sin Keyword (Precisa)"
                 audit_logs.append(log)
                 continue
             
@@ -403,7 +441,7 @@ def main():
             if c not in cached_map:
                 codes_needed_for_api.append(c)
 
-        # 3. Fetching (Turbo)
+        # 3. Fetching
         if codes_needed_for_api:
             st.info(f"Descargando {len(codes_needed_for_api)} detalles...")
             pbar = st.progress(0)
@@ -510,7 +548,7 @@ def main():
             
             edited = st.data_editor(
                 df_page,
-                column_order=["Web", "CodigoExterno", "Nombre", "Organismo", "Unidad", "EstadoTiempo", "FechaPublicacion", "FechaCierre", "Categoría", "Palabra Clave", "Ignorar", "Guardar", "Similitud"],
+                column_order=["Web", "CodigoExterno", "Nombre", "Organismo", "Unidad", "EstadoTiempo", "FechaPublicacion", "FechaCierre", "Categoría", "Ignorar", "Guardar", "Similitud"],
                 column_config={
                     "Web": st.column_config.LinkColumn("🔗", width="small", display_text="🔗"),
                     "CodigoExterno": st.column_config.TextColumn("ID", width="medium"),
@@ -551,8 +589,8 @@ def main():
         else: st.info("No hay guardados")
 
     with st.sidebar:
-        st.success("✅ Filtro Flexible Activo")
-        st.info("Detecta keywords aunque las palabras estén separadas (Ej: 'Diseño de Cesfam').")
+        st.success("✅ Filtro de Precisión (Regex) Activado")
+        st.info("Ahora 'ATO' solo se detecta si es la palabra completa, no dentro de 'CONTRATO'.")
         st.divider()
         ign = get_ignored_set()
         if ign:
