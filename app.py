@@ -12,29 +12,15 @@ from datetime import datetime, timedelta
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
-# --- SCIKIT-LEARN (LIGHTWEIGHT INTELLIGENCE) ---
-from sklearn.feature_extraction.text import TfidfVectorizer
-from sklearn.metrics.pairwise import cosine_similarity
-
 # --- CONFIGURATION ---
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 st.set_page_config(page_title="Monitor de Licitaciones Turbo", page_icon="⚡", layout="wide")
 
 # Constants
 BASE_URL = "https://api.mercadopublico.cl/servicios/v1/publico"
-DB_FILE = "licitaciones_v5_light.db" 
+DB_FILE = "licitaciones_v6_heuristic.db" 
 ITEMS_PER_PAGE = 50 
 MAX_WORKERS = 5 
-
-# --- IDIEM CORE BUSINESS DEFINITION ---
-# Texto "Ancla": Describe el negocio perfecto.
-IDIEM_ANCHOR_TEXT = """
-Servicios de ingeniería civil, inspección técnica de obras (ITO), supervisión de construcción, 
-mecánica de suelos, geotecnia, ensayos de materiales, laboratorio de hormigón, asfalto, acero, 
-control de calidad, topografía, levantamientos, sustentabilidad ambiental, huella de carbono, 
-eficiencia energética, cálculo estructural, peritajes forenses, edificación pública,
-infraestructura vial, aeroportuaria, túneles, consultoría técnica.
-"""
 
 # --- KEYWORD MAPPING ---
 KEYWORD_MAPPING = {
@@ -124,6 +110,30 @@ KEYWORD_MAPPING = {
   "Superintendencia de Infraestructura": "Mandantes Clave",
   "Metropolitana": "Mandantes Clave",
   "Regional": "Mandantes Clave"
+}
+
+# --- LOGIC: HEURISTIC SCORING DICTIONARY ---
+# Definimos pesos para palabras raíz. Si aparecen, suman puntos.
+# Esto corre 100% en Python nativo sin librerías externas.
+SCORING_RULES = {
+    # TIER 1: CORE BUSINESS CRÍTICO (10 Puntos)
+    "geotecn": 10, "mecanica de suelos": 10, "calicata": 10, "sondaje": 10,
+    "laboratorio": 10, "ensayo": 10, "hormigon": 10, "asfalto": 10, "acero": 8,
+    "forense": 10, "peritaje": 10, "reclamacion": 8,
+    
+    # TIER 2: HIGH VALUE (6 Puntos)
+    "ito ": 6, "ito.": 6, "inspeccion tecnica": 6, "supervision": 5, 
+    "topograf": 6, "levantamiento": 6, "mensura": 5, "fotogrametr": 6,
+    "huella de carbono": 7, "sustentab": 6, "eficiencia energetica": 6,
+    "estructural": 6, "calculo": 5, "sismico": 6,
+    
+    # TIER 3: CONTEXTO GENERAL (2 Puntos)
+    "ingenieria": 2, "estudio": 2, "consultoria": 2, "diseño": 2, 
+    "proyecto": 1, "obra civil": 2, "edificacion": 2, "infraestructura": 2,
+    
+    # PENALIZACIONES (Restan puntos si es algo que NO hacen)
+    "arriendo": -5, "compra de": -2, "suministro": -2, "catering": -10, 
+    "aseo": -10, "vigilancia": -10, "transporte": -5
 }
 
 # --- DATABASE ---
@@ -266,48 +276,37 @@ def fetch_detail_worker(args):
     except: pass
     return code, None
 
-# --- ROBUST LIGHTWEIGHT SCORING ENGINE ---
-def calculate_relevance_tfidf(tenders_list):
+# --- SCORING ENGINE (NO LIBRARIES) ---
+def calculate_relevance_heuristic(tenders_list):
     """
-    Usa TF-IDF de Scikit-Learn.
-    1. Combina el ANCHOR TEXT con todas las licitaciones en un corpus.
-    2. Calcula la similitud de coseno del Anchor vs cada licitación.
-    3. Es rápido, no requiere descarga de modelos y funciona con poca RAM.
+    Calcula relevancia basada en suma de puntos definidos en SCORING_RULES.
+    No requiere librerías externas. Es robusto y rápido.
     """
-    if not tenders_list:
-        return []
+    scores = []
+    # Umbral para considerar que es 100% relevante (ajustable)
+    # Ej: Si suma 20 puntos, ya es un match perfecto.
+    MAX_SCORE_THRESHOLD = 25.0 
     
-    try:
-        # Preparamos textos
-        # El índice 0 será siempre nuestro Anchor
-        texts = [IDIEM_ANCHOR_TEXT]
+    for t in tenders_list:
+        # 1. Combinar y limpiar texto
+        text = f"{t.get('Nombre', '')} {t.get('Descripcion', '')}".lower()
         
-        for t in tenders_list:
-            # Combinar Título + Descripción truncada
-            content = f"{t.get('Nombre', '')} {t.get('Descripcion', '')[:500]}"
-            texts.append(content)
-            
-        # Vectorización (Ignoramos stop words comunes en español si es posible, o usamos default)
-        # Usamos n-grams (1,2) para capturar "mecanica de suelos" como concepto
-        vectorizer = TfidfVectorizer(ngram_range=(1, 2), min_df=1)
+        current_score = 0.0
         
-        tfidf_matrix = vectorizer.fit_transform(texts)
+        # 2. Escanear reglas
+        for root_word, points in SCORING_RULES.items():
+            if root_word in text:
+                current_score += points
         
-        # Similitud: Primera fila (Anchor) contra todas las demás
-        # cosine_similarity devuelve shape (1, n_samples)
-        # tfidf_matrix[0:1] es el vector del anchor
-        # tfidf_matrix[1:] son los vectores de las licitaciones
-        cosine_sim = cosine_similarity(tfidf_matrix[0:1], tfidf_matrix[1:])
+        # 3. Normalizar a 0 - 100
+        # Evitamos negativos visuales, minimo 0
+        final_score = max(0.0, current_score)
         
-        # cosine_sim es [[score1, score2, ...]]
-        scores = cosine_sim[0]
+        # Cap en 100%
+        percentage = min(final_score / MAX_SCORE_THRESHOLD, 1.0)
+        scores.append(int(percentage * 100))
         
-        # Normalizar a 0-100 entero
-        return (scores * 100).astype(int).tolist()
-        
-    except Exception as e:
-        st.error(f"Error cálculo: {e}")
-        return [0] * len(tenders_list)
+    return scores
 
 # --- UTILS ---
 def parse_date(d):
@@ -339,7 +338,7 @@ def main():
     st.title("⚡ Monitor de Licitaciones Turbo")
     
     if not ticket: 
-        st.warning("Falta Ticket")
+        st.warning("Falta Ticket (MP_TICKET en secrets)")
         st.stop()
 
     # Filters
@@ -476,12 +475,12 @@ def main():
                  for l in audit_logs:
                      if l['ID'] == code: l['Estado_Audit'], l['Motivo'] = "Error API", "Fallo descarga"
 
-        # --- SCORING (TF-IDF) ---
+        # --- HEURISTIC SCORING EXECUTION ---
         if final_list:
-            with st.spinner("🧠 Analizando relevancia (TF-IDF)..."):
-                scores = calculate_relevance_tfidf(final_list)
-                for i, row in enumerate(final_list):
-                    row['Similitud'] = scores[i] / 100.0
+            # Sin spinner de IA, esto es instantáneo
+            scores = calculate_relevance_heuristic(final_list)
+            for i, row in enumerate(final_list):
+                row['Similitud'] = scores[i] / 100.0
 
         st.session_state.search_results = pd.DataFrame(final_list)
         st.session_state.audit_data = pd.DataFrame(audit_logs)
@@ -493,7 +492,7 @@ def main():
             df = st.session_state.search_results.copy()
             if "Similitud" in df.columns: df = df.sort_values("Similitud", ascending=False)
             
-            # Paginación y Tabla
+            # Paginación
             total_rows = len(df)
             total_pages = math.ceil(total_rows / ITEMS_PER_PAGE)
             cp1, cp2, cp3 = st.columns([1,4,1])
@@ -516,7 +515,7 @@ def main():
                     "Guardar": st.column_config.CheckboxColumn("💾", width="small"),
                     "Similitud": st.column_config.ProgressColumn(
                         "Relevancia", format="%.0f%%", min_value=0, max_value=1,
-                        help="Coincidencia ponderada de términos clave"
+                        help="Puntuación basada en conceptos clave de IDIEM"
                     ),
                     "FechaCierre": st.column_config.DateColumn("Cierre", format="DD/MM/YYYY"),
                 },
@@ -549,7 +548,7 @@ def main():
         else: st.info("No hay guardados")
 
     with st.sidebar:
-        st.info("💡 La barra 'Relevancia' ahora usa conteo de términos ponderados (TF-IDF). Es rápido y no sobrecarga el servidor.")
+        st.info("⚡ Modo Turbo: Scoring Heurístico activado (Cero dependencias externas).")
         st.divider()
         ign = get_ignored_set()
         if ign:
