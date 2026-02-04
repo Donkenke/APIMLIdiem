@@ -3,8 +3,7 @@ pandas
 requests
 urllib3
 sqlalchemy
-
-scikit-learn
 numpy
+
 
 
