@@ -16,11 +16,11 @@ st.set_page_config(page_title="Monitor Licitaciones", page_icon="⚡", layout="w
 
 # Constants
 BASE_URL = "https://api.mercadopublico.cl/servicios/v1/publico"
-DB_FILE = "licitaciones_v8.db" 
-ITEMS_PER_LOAD = 50 
+DB_FILE = "licitaciones_v6.db" 
+ITEMS_PER_LOAD = 50 # How many items to add when clicking "Load More"
 MAX_WORKERS = 5 
 
-# --- KEYWORDS ---
+# --- KEYWORD CONFIGURATION (Same as before) ---
 KEYWORD_MAPPING = {
   "Asesoría inspección": "Inspección Técnica y Supervisión",
   "AIF": "Inspección Técnica y Supervisión",
@@ -132,6 +132,7 @@ def init_db():
         json_data TEXT,
         fecha_ingreso TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )''')
+    # New table to track what we have already seen to mark "New" items
     c.execute('''CREATE TABLE IF NOT EXISTS historial_vistas (
         codigo_externo TEXT PRIMARY KEY,
         fecha_primer_avistamiento TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -172,7 +173,8 @@ def ignore_tender(code):
 def save_tender(data):
     try:
         clean = data.copy()
-        for k in ['Guardar','Ignorar','MontoStr','EstadoTiempo','EsNuevo','Web']: 
+        # Clean keys that are not needed in DB
+        for k in ['Guardar','Ignorar','MontoStr','EstadoTiempo','EsNuevo']: 
             clean.pop(k, None)
         conn = sqlite3.connect(DB_FILE)
         conn.execute("INSERT OR REPLACE INTO marcadores (codigo_externo, nombre, organismo, fecha_cierre, url, raw_data) VALUES (?,?,?,?,?,?)",
@@ -189,12 +191,7 @@ def get_saved():
         return df
     except: return pd.DataFrame()
 
-def restore_tender(code):
-    conn = sqlite3.connect(DB_FILE)
-    conn.execute("DELETE FROM ignorados WHERE codigo_externo = ?", (code,))
-    conn.commit(); conn.close()
-
-# --- API ---
+# --- API & SEARCH ---
 def get_api_session():
     session = requests.Session()
     session.headers.update({"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0 Safari/537.36"})
@@ -281,6 +278,7 @@ def format_clp(v):
 def main():
     init_db()
     
+    # Visible rows state for "Load More" logic
     if 'visible_rows' not in st.session_state:
         st.session_state.visible_rows = ITEMS_PER_LOAD
 
@@ -289,20 +287,25 @@ def main():
     
     if not ticket: st.warning("Falta Ticket (MP_TICKET)"); st.stop()
 
-    # --- HEADER: Date (Left) | Filters (Right) ---
-    c_head1, c_spacer, c_head2 = st.columns([1.5, 1.5, 2.5])
+    # --- NEW LAYOUT: Header & Filters ---
+    # Col 1: Dates (No Border) | Col 2: Filters (Right Aligned, Compact)
+    c_dates, c_spacer, c_filters = st.columns([1.5, 0.5, 3])
     
-    with c_head1:
+    with c_dates:
         today = datetime.now()
         dr = st.date_input("Rango de Consulta", (today - timedelta(days=15), today), max_value=today, format="DD/MM/YYYY")
-        if st.button("🔄 Buscar Datos", type="primary"):
-            st.cache_data.clear()
-            if 'search_results' in st.session_state: del st.session_state['search_results']
-            st.session_state.visible_rows = ITEMS_PER_LOAD
-            st.rerun()
-
-    with c_head2:
+    
+    with c_filters:
+        # Placeholder for filters that will populate after search
+        # We define containers here so they appear in the layout, but fill them later
         c_f1, c_f2 = st.columns(2)
+
+    # Search Button in a thin row below
+    if st.button("🔄 Buscar Datos", type="primary"):
+        st.cache_data.clear()
+        if 'search_results' in st.session_state: del st.session_state['search_results']
+        st.session_state.visible_rows = ITEMS_PER_LOAD # Reset pagination
+        st.rerun()
 
     t_res, t_audit, t_sav = st.tabs(["🔍 Resultados", "🕵️ Auditoría", "💾 Guardados"])
 
@@ -314,8 +317,11 @@ def main():
         with st.spinner("Descargando resúmenes..."):
             raw_items, fetch_errors = fetch_summaries_raw(start, end, ticket)
         
-        if fetch_errors: st.warning(f"Errores conexión: {len(fetch_errors)}")
+        if fetch_errors:
+            with st.expander("Ver errores de descarga", expanded=False):
+                st.write(fetch_errors)
 
+        # Audit & Filter
         audit_logs = []
         candidates = []
         ignored = get_ignored_set()
@@ -332,6 +338,8 @@ def main():
             cat, kw = get_cat(full_txt)
             
             if cat:
+                # Check New Status
+                # Logic: If ID is NOT in 'seen' set, it is new for this user
                 is_new = False
                 if code not in seen:
                     is_new = True
@@ -343,6 +351,7 @@ def main():
             else:
                 audit_logs.append({"ID": code, "Estado": "No Keyword"})
 
+        # Mark new items as seen in DB so they aren't "new" next time
         mark_as_seen(new_seen_ids)
 
         # Fetch Details
@@ -350,8 +359,8 @@ def main():
         to_fetch = [c['CodigoExterno'] for c in candidates if c['CodigoExterno'] not in cached]
         
         if to_fetch:
-            status = st.empty()
-            status.text(f"Bajando {len(to_fetch)} detalles...")
+            status_text = st.empty()
+            status_text.text(f"Descargando {len(to_fetch)} detalles...")
             tasks = [(code, ticket) for code in to_fetch]
             with concurrent.futures.ThreadPoolExecutor(max_workers=MAX_WORKERS) as exe:
                 future_to_code = {exe.submit(fetch_detail_worker, t): t[0] for t in tasks}
@@ -360,19 +369,19 @@ def main():
                     if c_data:
                         save_cache(c_code, c_data)
                         cached[c_code] = json.dumps(c_data)
-            status.empty()
+            status_text.empty()
 
+        # Build Final DF
         final = []
         for cand in candidates:
             code = cand['CodigoExterno']
             det = json.loads(cached.get(code, "{}")) if code in cached else {}
             
             d_cierre = parse_date(det.get('Fechas', {}).get('FechaCierre'))
-            if d_cierre and d_cierre < datetime.now(): continue 
+            if d_cierre and d_cierre < datetime.now(): continue # Skip expired
 
             final.append({
                 "CodigoExterno": code,
-                "Web": f"https://www.mercadopublico.cl/Procurement/Modules/RFB/DetailsAcquisition.aspx?idLicitacion={code}",
                 "Link": f"https://www.mercadopublico.cl/Procurement/Modules/RFB/DetailsAcquisition.aspx?idLicitacion={code}",
                 "Nombre": det.get('Nombre','').title(),
                 "Organismo": det.get('Comprador',{}).get('NombreOrganismo','').title(),
@@ -382,21 +391,19 @@ def main():
                 "Descripcion": det.get('Descripcion',''),
                 "Categoría": cand['_cat'],
                 "Palabra Clave": cand['_kw'],
-                "EsNuevo": cand['_is_new'],
-                "Guardar": False,
-                "Ignorar": False
+                "EsNuevo": cand['_is_new'] # Boolean for the checkbox column
             })
         
         st.session_state.search_results = pd.DataFrame(final)
         st.session_state.audit_data = pd.DataFrame(audit_logs)
 
-    # --- TAB RESULTADOS ---
+    # --- RENDER TAB 1 ---
     with t_res:
         if 'search_results' in st.session_state and not st.session_state.search_results.empty:
             df = st.session_state.search_results.copy()
             df = df.sort_values("FechaPublicacion", ascending=False)
 
-            # Filter Population
+            # --- POPULATE FILTERS (Right Side) ---
             with c_f1:
                 cat_sel = st.multiselect("Categoría", options=sorted(df["Categoría"].unique()), label_visibility="collapsed", placeholder="Filtrar Categoría...")
             with c_f2:
@@ -405,114 +412,82 @@ def main():
             if cat_sel: df = df[df["Categoría"].isin(cat_sel)]
             if kw_sel: df = df[df["Palabra Clave"].isin(kw_sel)]
 
+            # --- LOAD MORE LOGIC ---
             total_rows = len(df)
             visible = st.session_state.visible_rows
             df_visible = df.iloc[:visible]
 
-            # --- TABLE ---
-            # ENABLED SELECTION (on_select="rerun") so index column appears and triggers sidebar
-            edited_df = st.data_editor(
+            # Table
+            # Note: We use LinkColumn for the web link and CheckboxColumn for "EsNuevo"
+            event = st.dataframe(
                 df_visible,
-                column_order=["Web","CodigoExterno","Nombre","Organismo","FechaPublicacion","FechaCierre","Categoría","Palabra Clave","EsNuevo","Guardar","Ignorar"],
+                column_order=["Link","CodigoExterno","Nombre","Organismo","FechaPublicacion","FechaCierre","Categoría","Palabra Clave","EsNuevo"],
                 column_config={
-                    "Web": st.column_config.LinkColumn("URL", display_text="🌐", width="small"),
-                    "CodigoExterno": st.column_config.TextColumn("ID", width="small", disabled=True),
-                    "Nombre": st.column_config.TextColumn("Nombre Licitación", width="large", disabled=True),
-                    "Organismo": st.column_config.TextColumn("Organismo", width="medium", disabled=True),
-                    "FechaPublicacion": st.column_config.DateColumn("Publicado", format="DD/MM/YY", disabled=True),
-                    "FechaCierre": st.column_config.DateColumn("Cierre", format="DD/MM/YY", disabled=True),
-                    "EsNuevo": st.column_config.CheckboxColumn("¿Nuevo?", disabled=True, width="small"),
-                    "Categoría": st.column_config.TextColumn("Categoría", width="small", disabled=True),
-                    "Palabra Clave": st.column_config.TextColumn("Keyword", width="small", disabled=True),
-                    "Guardar": st.column_config.CheckboxColumn("💾", width="small", default=False),
-                    "Ignorar": st.column_config.CheckboxColumn("❌", width="small", default=False),
+                    "Link": st.column_config.LinkColumn("", display_text="🔗", width="small"),
+                    "CodigoExterno": st.column_config.TextColumn("ID", width="small"),
+                    "Nombre": st.column_config.TextColumn("Nombre Licitación", width="large"),
+                    "FechaPublicacion": st.column_config.DateColumn("Publicado", format="DD/MM/YY"),
+                    "FechaCierre": st.column_config.DateColumn("Cierre", format="DD/MM/YY"),
+                    "EsNuevo": st.column_config.CheckboxColumn("¿Nuevo?", default=False, width="small"), # Last Column Check
                 },
-                hide_index=True, # Hides numbers (0,1,2) but KEEPS the selection column due to on_select
-                on_select="rerun", # CRITICAL: This enables the selection mechanism
-                selection_mode="single-row",
+                hide_index=True,
                 height=600,
-                key="editor_main"
+                selection_mode="single-row",
+                on_select="rerun"
             )
 
-            # --- SIDEBAR TRIGGER ---
-            # Capture selection from the editor
-            if edited_df and "selection" in st.session_state.editor_main:
-                sel_rows = st.session_state.editor_main["selection"]["rows"]
-                if sel_rows:
-                    idx = sel_rows[0]
-                    # Map back to data source
-                    st.session_state['selected_tender'] = df_visible.iloc[idx].to_dict()
+            # Load More Button
+            if visible < total_rows:
+                st.write(f"Mostrando {visible} de {total_rows} licitaciones.")
+                if st.button("⬇️ Cargar más resultados...", use_container_width=True):
+                    st.session_state.visible_rows += ITEMS_PER_LOAD
+                    st.rerun()
 
-            # --- ACTION BUTTONS ---
-            c_btn1, c_btn2, c_more = st.columns([1, 1, 3])
-            
-            with c_btn1:
-                to_save = edited_df[edited_df["Guardar"]]
-                if not to_save.empty:
-                    if st.button(f"💾 Guardar ({len(to_save)})", type="primary"):
-                        count = 0
-                        for _, row in to_save.iterrows():
-                            if save_tender(row.to_dict()): count += 1
-                        st.toast(f"{count} guardados.", icon="✅")
-                        time.sleep(1); st.rerun()
-
-            with c_btn2:
-                to_ignore = edited_df[edited_df["Ignorar"]]
-                if not to_ignore.empty:
-                    if st.button(f"❌ Eliminar ({len(to_ignore)})"):
-                        for _, row in to_ignore.iterrows():
-                            ignore_tender(row['CodigoExterno'])
-                        st.toast(f"{len(to_ignore)} eliminados.", icon="🗑️")
-                        st.cache_data.clear(); del st.session_state['search_results']
-                        st.rerun()
-
-            with c_more:
-                if visible < total_rows:
-                    if st.button("⬇️ Cargar más resultados...", use_container_width=True):
-                        st.session_state.visible_rows += ITEMS_PER_LOAD
-                        st.rerun()
+            # Selection Logic
+            if event.selection and event.selection["rows"]:
+                idx = event.selection["rows"][0]
+                st.session_state['selected_tender'] = df_visible.iloc[idx].to_dict()
         else:
-            st.info("Sin resultados.")
+            st.info("Sin resultados pendientes.")
 
-    # --- SIDEBAR ---
+    # --- SIDEBAR DETAILS ---
     with st.sidebar:
         st.header("📋 Detalle")
         if 'selected_tender' in st.session_state:
             d = st.session_state['selected_tender']
-            if d.get('EsNuevo'): st.success("✨ Nueva detección")
+            
+            # Badge for New
+            if d.get('EsNuevo'): st.success("✨ ¡Detectada hoy por primera vez!")
             
             st.subheader(d['Nombre'])
-            st.write(f"**ID:** {d['CodigoExterno']}")
-            st.write(f"**Org:** {d['Organismo']}")
+            st.caption(f"ID: {d['CodigoExterno']}")
+            st.write(f"**Organismo:** {d['Organismo']}")
             st.write(f"**Cierre:** {d['FechaCierre']}")
             st.write(f"**Monto:** {d.get('MontoStr','-')}")
-            st.caption(d.get('Descripcion',''))
-            st.link_button("Ir a Mercado Público 🌐", d['Link'], use_container_width=True)
+            
+            st.markdown("---")
+            st.caption("Descripción:")
+            st.text_area("", d.get('Descripcion',''), height=150, disabled=True)
+            
+            st.link_button("🌍 Ver en Mercado Público", d['Link'], use_container_width=True)
             
             c_s1, c_s2 = st.columns(2)
-            if c_s1.button("💾 Guardar", key="sb_save"):
+            if c_s1.button("💾 Guardar"):
                 if save_tender(d): st.toast("Guardado")
-            if c_s2.button("🚫 Ocultar", key="sb_ign"):
+            if c_s2.button("🚫 Ocultar"):
                 ignore_tender(d['CodigoExterno'])
                 st.toast("Ocultado")
         else:
-            st.info("Selecciona una fila (casilla izquierda) para ver detalles.")
-        
-        st.divider()
-        with st.expander("🛡️ Lista Negra"):
-            ign = get_ignored_set()
-            if ign:
-                s = st.selectbox("Restaurar ID", list(ign))
-                if st.button("Restaurar"):
-                    restore_tender(s); st.rerun()
-            else: st.write("Vacía")
+            st.info("Selecciona una fila para ver detalles.")
 
-    # --- SAVED ---
-    with t_sav:
-        st.dataframe(get_saved(), use_container_width=True, hide_index=True)
-    
+    # --- AUDIT TAB ---
     with t_audit:
-        if 'audit_data' in st.session_state: st.dataframe(st.session_state.audit_data, use_container_width=True)
+        if 'audit_data' in st.session_state:
+            st.dataframe(st.session_state.audit_data, use_container_width=True)
+
+    # --- SAVED TAB ---
+    with t_sav:
+        st.dataframe(get_saved(), use_container_width=True)
 
 if __name__ == "__main__":
     main()
