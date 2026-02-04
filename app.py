@@ -172,7 +172,7 @@ def ignore_tender(code):
 def save_tender(data):
     try:
         clean = data.copy()
-        for k in ['Guardar','Ignorar','MontoStr','EstadoTiempo','EsNuevo','Web']: 
+        for k in ['Guardar','Ignorar','MontoStr','EstadoTiempo','EsNuevo','Web','Seleccionar']: 
             clean.pop(k, None)
         conn = sqlite3.connect(DB_FILE)
         conn.execute("INSERT OR REPLACE INTO marcadores (codigo_externo, nombre, organismo, fecha_cierre, url, raw_data) VALUES (?,?,?,?,?,?)",
@@ -285,24 +285,20 @@ def main():
         st.session_state.visible_rows = ITEMS_PER_LOAD
 
     ticket = st.secrets.get("MP_TICKET")
-    st.title("⚡ Monitor de Licitaciones Turbo")
+    st.title("Monitor de Licitaciones IDIEM")
     
     if not ticket: st.warning("Falta Ticket (MP_TICKET)"); st.stop()
 
-    # --- HEADER: Improved Alignment ---
-    # Col 1: Date Input | Col 2: Search Button (Aligned) | Spacer | Col 3 & 4: Filters
+    # --- HEADER ---
     c_date, c_btn, c_spacer, c_f1, c_f2 = st.columns([1.5, 0.7, 0.3, 1.5, 1.5])
     
     with c_date:
         today = datetime.now()
-        # Changed default to last 7 days
         dr = st.date_input("Rango de Consulta", (today - timedelta(days=7), today), max_value=today, format="DD/MM/YYYY")
 
     with c_btn:
-        # Vertical Spacer to align button with input box (approx. 2 lines of text height)
         st.write("") 
         st.write("") 
-        # Button: Removed 'primary' type to make it neutral/grey. Full width to match aesthetic.
         do_search = st.button("🔍 Buscar Datos", use_container_width=True)
 
     if do_search:
@@ -311,10 +307,7 @@ def main():
         st.session_state.visible_rows = ITEMS_PER_LOAD
         st.rerun()
 
-    # Placeholders for filters (populated later)
-    # They are already defined in the header columns (c_f1, c_f2)
-
-    t_res, t_audit, t_sav = st.tabs(["🔍 Resultados", "🕵️ Auditoría", "💾 Guardados"])
+    t_res, t_sav, t_audit = st.tabs(["🔍 Resultados",  "💾 Guardados", " Auditoría",])
 
     # --- LOGIC ---
     if 'search_results' not in st.session_state:
@@ -359,9 +352,8 @@ def main():
         cached = get_cached_details([c['CodigoExterno'] for c in candidates])
         to_fetch = [c['CodigoExterno'] for c in candidates if c['CodigoExterno'] not in cached]
         
-        # --- PROGRESS BAR LOGIC ---
+        # --- PROGRESS BAR ---
         if to_fetch:
-            # Create a progress bar
             progress_bar = st.progress(0, text="Iniciando descarga de detalles...")
             total_items = len(to_fetch)
             completed_items = 0
@@ -375,12 +367,10 @@ def main():
                         save_cache(c_code, c_data)
                         cached[c_code] = json.dumps(c_data)
                     
-                    # Update Progress
                     completed_items += 1
                     progress_percentage = min(completed_items / total_items, 1.0)
                     progress_bar.progress(progress_percentage, text=f"Descargando {completed_items}/{total_items} detalles...")
             
-            # Clear progress bar when done
             progress_bar.empty()
 
         final = []
@@ -430,11 +420,17 @@ def main():
             visible = st.session_state.visible_rows
             df_visible = df.iloc[:visible]
 
+            # --- WORKAROUND FOR SELECTION ---
+            # data_editor does not support on_select. We use a checkbox column "Seleccionar" instead.
+            if "Seleccionar" not in df_visible.columns:
+                df_visible.insert(0, "Seleccionar", False)
+
             # --- TABLE ---
             edited_df = st.data_editor(
                 df_visible,
-                column_order=["Web","CodigoExterno","Nombre","Organismo","FechaPublicacion","FechaCierre","Categoría","Palabra Clave","EsNuevo","Guardar","Ignorar"],
+                column_order=["Seleccionar", "Web","CodigoExterno","Nombre","Organismo","FechaPublicacion","FechaCierre","Categoría","Palabra Clave","EsNuevo","Guardar","Ignorar"],
                 column_config={
+                    "Seleccionar": st.column_config.CheckboxColumn("Ver", width="small", default=False),
                     "Web": st.column_config.LinkColumn("URL", display_text="🌐", width="small"),
                     "CodigoExterno": st.column_config.TextColumn("ID", width="small", disabled=True),
                     "Nombre": st.column_config.TextColumn("Nombre Licitación", width="large", disabled=True),
@@ -448,18 +444,19 @@ def main():
                     "Ignorar": st.column_config.CheckboxColumn("❌", width="small", default=False),
                 },
                 hide_index=True, 
-                on_select="rerun",
-                selection_mode="single-row",
+                # on_select removed to fix crash
+                # selection_mode removed
                 height=600,
                 key="editor_main"
             )
 
-            # --- SIDEBAR TRIGGER ---
-            if edited_df and "selection" in st.session_state.editor_main:
-                sel_rows = st.session_state.editor_main["selection"]["rows"]
-                if sel_rows:
-                    idx = sel_rows[0]
-                    st.session_state['selected_tender'] = df_visible.iloc[idx].to_dict()
+            # --- SIDEBAR TRIGGER LOGIC ---
+            # Detect row where "Seleccionar" is Checked
+            sel_rows = edited_df[edited_df["Seleccionar"] == True]
+            if not sel_rows.empty:
+                # Get the first selected row (simulating single selection)
+                idx = sel_rows.index[0] # Use index to get correct row data
+                st.session_state['selected_tender'] = sel_rows.loc[idx].to_dict()
 
             # --- ACTION BUTTONS ---
             c_btn1, c_btn2, c_more = st.columns([1, 1, 3])
@@ -514,7 +511,7 @@ def main():
                 ignore_tender(d['CodigoExterno'])
                 st.toast("Ocultado")
         else:
-            st.info("Selecciona una fila (casilla izquierda) para ver detalles.")
+            st.info("Marca la casilla 'Ver' en la tabla para ver detalles.")
         
         st.divider()
         with st.expander("🛡️ Lista Negra"):
