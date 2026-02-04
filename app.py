@@ -7,9 +7,14 @@ import sqlite3
 import time
 import math
 import concurrent.futures
+import numpy as np # Added for calc
 from datetime import datetime, timedelta
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
+
+# --- AI & SCORING LIBRARIES ---
+from sentence_transformers import SentenceTransformer
+from sklearn.metrics.pairwise import cosine_similarity
 
 # --- CONFIGURATION ---
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
@@ -17,9 +22,19 @@ st.set_page_config(page_title="Monitor de Licitaciones Turbo", page_icon="⚡", 
 
 # Constants
 BASE_URL = "https://api.mercadopublico.cl/servicios/v1/publico"
-DB_FILE = "licitaciones_v4.db" # Changed version to clean start
+DB_FILE = "licitaciones_v4.db" 
 ITEMS_PER_PAGE = 50 
-MAX_WORKERS = 5 # Number of simultaneous downloads (Don't go over 8 to avoid bans)
+MAX_WORKERS = 5 
+
+# --- AI CONFIGURATION (IDIEM CORE BUSINESS) ---
+IDIEM_ANCHOR_TEXT = """
+Servicios de ingeniería, inspección técnica de obras (ITO), supervisión de construcción, 
+mecánica de suelos, geotecnia, ensayos de materiales, hormigón, asfalto, acero, 
+laboratorio de control de calidad, topografía y levantamientos, sustentabilidad ambiental, 
+huella de carbono, eficiencia energética en edificación, revisión de proyectos de cálculo estructural, 
+gestión de contratos, peritajes forenses de construcción, estructuras y edificación pública,
+infraestructura vial, aeroportuaria y túneles.
+"""
 
 # --- KEYWORD MAPPING ---
 KEYWORD_MAPPING = {
@@ -133,7 +148,8 @@ def init_db():
         json_data TEXT,
         fecha_ingreso TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )''')
-    conn.commit(); conn.close()
+    conn.commit()
+    conn.close()
 
 # --- DB HELPERS ---
 def get_ignored_set():
@@ -147,21 +163,27 @@ def get_ignored_set():
 def ignore_tender(code):
     conn = sqlite3.connect(DB_FILE)
     conn.execute("INSERT OR REPLACE INTO ignorados (codigo_externo) VALUES (?)", (code,))
-    conn.commit(); conn.close()
+    conn.commit()
+    conn.close()
 
 def restore_tender(code):
     conn = sqlite3.connect(DB_FILE)
     conn.execute("DELETE FROM ignorados WHERE codigo_externo = ?", (code,))
-    conn.commit(); conn.close()
+    conn.commit()
+    conn.close()
 
 def save_tender(data):
     try:
         clean = data.copy()
-        for k in ['Ver','Guardar','Ignorar','MontoStr','EstadoTiempo']: clean.pop(k, None)
+        # Clean keys that are not needed for DB or might cause issues
+        for k in ['Ver','Guardar','Ignorar','MontoStr','EstadoTiempo', 'Similitud']: 
+            clean.pop(k, None)
+            
         conn = sqlite3.connect(DB_FILE)
         conn.execute("INSERT OR REPLACE INTO marcadores (codigo_externo, nombre, organismo, fecha_cierre, url, raw_data) VALUES (?,?,?,?,?,?)",
                      (clean['CodigoExterno'], clean['Nombre'], clean['Organismo'], str(clean['FechaCierre']), clean['Link'], json.dumps(clean, default=str)))
-        conn.commit(); conn.close()
+        conn.commit()
+        conn.close()
         return True
     except: return False
 
@@ -176,7 +198,8 @@ def get_saved():
 def delete_saved(code):
     conn = sqlite3.connect(DB_FILE)
     conn.execute("DELETE FROM marcadores WHERE codigo_externo = ?", (code,))
-    conn.commit(); conn.close()
+    conn.commit()
+    conn.close()
 
 # --- CACHE & API ---
 def get_cached_details(codigos):
@@ -193,7 +216,8 @@ def save_cache(code, data):
     try:
         conn = sqlite3.connect(DB_FILE)
         conn.execute("INSERT OR REPLACE INTO cache_detalles (codigo_externo, json_data) VALUES (?,?)", (code, json.dumps(data)))
-        conn.commit(); conn.close()
+        conn.commit()
+        conn.close()
     except: pass
 
 def get_api_session():
@@ -221,8 +245,6 @@ def fetch_summaries_raw(start_date, end_date, ticket):
     delta = (end_date - start_date).days + 1
     session = get_api_session()
     
-    # Summaries are fast, we can fetch them sequentially or parallel too, 
-    # but usually sequential is fine for 15 calls.
     for i in range(delta):
         d = start_date + timedelta(days=i)
         d_str = d.strftime("%d%m%Y")
@@ -247,8 +269,6 @@ def fetch_detail_worker(args):
     """Worker function for threading."""
     code, ticket = args
     try:
-        # Create a fresh session for thread safety/independence (or reuse global if thread-safe)
-        # requests.Session is thread-safe for reading, but creating new one is safer for simple logic
         session = get_api_session() 
         url = f"{BASE_URL}/licitaciones.json?codigo={code}&ticket={ticket}"
         r = session.get(url, verify=False, timeout=20)
@@ -259,6 +279,44 @@ def fetch_detail_worker(args):
     except Exception:
         pass
     return code, None
+
+# --- AI SCORING HELPERS ---
+@st.cache_resource
+def load_embedding_model():
+    """Loads a lightweight (80MB) but effective model for semantic similarity."""
+    return SentenceTransformer('all-MiniLM-L6-v2')
+
+def calculate_relevance_batch(tenders_list):
+    """
+    Receives list of dicts, vectorizes Nombre+Desc, compares to Anchor, returns list of scores (0-100).
+    """
+    if not tenders_list:
+        return []
+    
+    try:
+        model = load_embedding_model()
+        
+        # 1. Vectorize Anchor
+        anchor_vec = model.encode([IDIEM_ANCHOR_TEXT])
+        
+        # 2. Prepare Tender Texts (Name + Truncated Description)
+        tender_texts = [
+            f"{t.get('Nombre', '')} {t.get('Descripcion', '')[:300]}" 
+            for t in tenders_list
+        ]
+        
+        # 3. Vectorize Batch
+        tenders_vec = model.encode(tender_texts)
+        
+        # 4. Cosine Similarity
+        sim_scores = cosine_similarity(anchor_vec, tenders_vec)[0]
+        
+        # 5. Normalize
+        return (sim_scores * 100).astype(int).tolist()
+        
+    except Exception as e:
+        print(f"Error in AI scoring: {e}")
+        return [0] * len(tenders_list)
 
 # --- UTILS ---
 def parse_date(d):
@@ -289,7 +347,9 @@ def main():
     ticket = st.secrets.get("MP_TICKET")
     st.title("⚡ Monitor de Licitaciones Turbo")
     
-    if not ticket: st.warning("Falta Ticket"); st.stop()
+    if not ticket: 
+        st.warning("Falta Ticket")
+        st.stop()
 
     # Filters
     c1, c2, c3 = st.columns([2, 1, 1])
@@ -298,7 +358,8 @@ def main():
         dr = st.date_input("Rango", (today - timedelta(days=15), today), max_value=today, format="DD/MM/YYYY")
         show_closed = st.checkbox("Incluir Cerradas", value=False)
     with c2:
-        st.write(""); st.write("")
+        st.write("")
+        st.write("")
         if st.button("🔄 Buscar Datos", type="primary"):
             st.cache_data.clear()
             if 'search_results' in st.session_state: del st.session_state['search_results']
@@ -399,7 +460,7 @@ def main():
         for cand in candidates:
             code = cand['CodigoExterno']
             
-            # Load from cache (it should be there now, either old or just fetched)
+            # Load from cache
             detail = None
             if code in cached_map:
                 try: detail = json.loads(cached_map[code])
@@ -433,11 +494,19 @@ def main():
                     for l in audit_logs:
                         if l['ID'] == code: l['Estado_Audit'], l['Motivo'] = "VISIBLE", "OK"
                 else:
-                    for l in audit_logs:
+                     for l in audit_logs:
                         if l['ID'] == code: l['Estado_Audit'], l['Motivo'] = "Descartado", "Vencida (Detalle)"
             else:
                  for l in audit_logs:
-                        if l['ID'] == code: l['Estado_Audit'], l['Motivo'] = "Error API", "Fallo descarga detalle"
+                     if l['ID'] == code: l['Estado_Audit'], l['Motivo'] = "Error API", "Fallo descarga detalle"
+
+        # --- AI SCORING INJECTION ---
+        if final_list:
+            with st.spinner("🧠 Analizando relevancia con IA..."):
+                scores = calculate_relevance_batch(final_list)
+                for i, row in enumerate(final_list):
+                    # Save as 0.0-1.0 float for Progress Column
+                    row['Similitud'] = scores[i] / 100.0 
 
         st.session_state.search_results = pd.DataFrame(final_list)
         st.session_state.audit_data = pd.DataFrame(audit_logs)
@@ -448,11 +517,17 @@ def main():
     with t_res:
         if 'search_results' in st.session_state and not st.session_state.search_results.empty:
             df = st.session_state.search_results.copy()
-            if "FechaPublicacion" in df.columns:
+            
+            # Sort by Relevance (Similitud) descending
+            if "Similitud" in df.columns:
+                df = df.sort_values("Similitud", ascending=False)
+            elif "FechaPublicacion" in df.columns:
                 df = df.sort_values("FechaPublicacion", ascending=False)
 
-            for c in ["Ver","Guardar","Ignorar"]: 
+            for c in ["Guardar","Ignorar"]: 
                 if c not in df.columns: df[c] = False
+            if "Similitud" not in df.columns: df["Similitud"] = 0.0 # Fallback
+
             df["Web"] = df["Link"]
             
             # Pagination
@@ -471,14 +546,24 @@ def main():
             idx_end = idx_start + ITEMS_PER_PAGE
             df_page = df.iloc[idx_start:idx_end]
             
+            # Modified Data Editor (Replaced "Ver" with "Similitud")
             edited = st.data_editor(
                 df_page,
-                column_order=["Web","CodigoExterno","Nombre","EstadoTiempo","FechaPublicacion","FechaCierre","Categoría","Palabra Clave","Ignorar","Guardar","Ver"],
+                column_order=["Similitud","Web","CodigoExterno","Nombre","EstadoTiempo","FechaCierre","Categoría","Palabra Clave","Ignorar","Guardar"],
                 column_config={
                     "Web": st.column_config.LinkColumn("🔗", width="small", display_text="🔗"),
                     "Ignorar": st.column_config.CheckboxColumn("❌", width="small"),
                     "Guardar": st.column_config.CheckboxColumn("💾", width="small"),
-                    "Ver": st.column_config.CheckboxColumn("👁️", width="small"),
+                    
+                    # New AI Score Column
+                    "Similitud": st.column_config.ProgressColumn(
+                        "Relevancia",
+                        help="Coincidencia semántica con IDIEM",
+                        format="%.0f%%",
+                        min_value=0,
+                        max_value=1,
+                    ),
+                    
                     "FechaPublicacion": st.column_config.DateColumn("Publicado", format="DD/MM/YYYY"),
                     "FechaCierre": st.column_config.DateColumn("Cierre", format="DD/MM/YYYY"),
                 },
@@ -487,8 +572,8 @@ def main():
                 key=f"editor_{st.session_state.page_number}"
             )
             
-            sel = edited[edited["Ver"]==True]
-            if not sel.empty: st.session_state['selected_tender'] = sel.iloc[0].to_dict()
+            # Row selection logic (Implicit by "Guardar" or via manual selection event if enabled)
+            # Since we removed "Ver", we check if user wants to save
             
             c_a1, c_a2 = st.columns(2)
             with c_a1:
@@ -517,19 +602,13 @@ def main():
         saved = get_saved()
         if not saved.empty:
             st.dataframe(saved)
-            # Logic for deletion could be added here
         else: st.info("No hay guardados")
 
     # Details Sidebar
     with st.sidebar:
-        if 'selected_tender' in st.session_state:
-            d = st.session_state['selected_tender']
-            st.header("📄 Detalle")
-            st.info(d['Nombre'])
-            st.write(f"**ID:** {d['CodigoExterno']}")
-            st.write(f"**Cierre:** {d['FechaCierre']}")
-            st.write(d.get('Descripcion',''))
-            st.markdown(f"[Ver Web]({d['Link']})")
+        # Since we removed "Ver", we can show details for the first "Guardar" item or use st.dataframe selection if needed.
+        # For now, we keep the structure if 'selected_tender' is populated manually or we can default to top result
+        st.info("💡 Consejo: Usa la barra de Relevancia para priorizar.")
         
         st.divider()
         st.header("🛡️ Lista Negra")
