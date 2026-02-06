@@ -292,8 +292,7 @@ common_config = {
     # 3. Ocultar
     "Ocultar": st.column_config.CheckboxColumn("🗑️", width="small", help="Ocultar"),
     
-    # 4. Visto (READ ONLY CHECKBOX)
-    "Visto": st.column_config.CheckboxColumn("👁️", width="small", disabled=True, help="Check = Visto, Vacío = Nuevo"),
+    
     
     # 5. Codigo
     "Codigo": st.column_config.TextColumn("ID", width="small"),
@@ -302,9 +301,11 @@ common_config = {
     "Nombre": st.column_config.TextColumn("Nombre Licitación", width="large"),
     "Organismo": st.column_config.TextColumn("Organismo", width="medium"),
     "Monto": st.column_config.TextColumn("Monto ($)", width="medium"), 
-    "Fecha Pub": st.column_config.TextColumn("Pub.", width="small"),
-    "Fecha Cierre": st.column_config.TextColumn("Cierre", width="small"),
+    "Fecha Pub": st.column_config.TextColumn("Pub."),
+    "Fecha Cierre": st.column_config.TextColumn("Cierre"),
     "Categoria": st.column_config.TextColumn("Categ.", width="medium"),
+    # 4. Visto (READ ONLY CHECKBOX)
+    "Visto": st.column_config.CheckboxColumn("Visto", disabled=True, help="Check = Visto, Vacío = Nuevo"),
 }
 
 ordered_cols = ["URL", "Guardar", "Ocultar", "Visto", "Codigo", "Nombre", "Organismo", "Monto", "Fecha Pub", "Fecha Cierre", "Categoria"]
