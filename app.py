@@ -4,12 +4,11 @@ import json
 import os
 import re
 import sqlite3
-from datetime import datetime
+from datetime import datetime, date
 
 # --- CONFIGURATION ---
 st.set_page_config(page_title="Monitor Licitaciones IDIEM", layout="wide", page_icon="🏗️")
 
-# UTM Value (Feb 2026 approx)
 UTM_VALUE = 69611 
 JSON_FILE = "FINAL_PRODUCTION_DATA.json"
 DB_FILE = "licitaciones_state.db"
@@ -19,10 +18,8 @@ st.markdown("""
     <style>
         .block-container { padding-top: 1rem; padding-bottom: 2rem; }
         .stDataFrame { border: 1px solid #e0e0e0; border-radius: 5px; }
-        .stTabs [data-baseweb="tab-list"] { gap: 24px; }
-        .stTabs [data-baseweb="tab"] { height: 50px; background-color: #f0f2f6; border-radius: 4px 4px 0 0; }
-        .stTabs [aria-selected="true"] { background-color: #ffffff; border-top: 2px solid #ff4b4b; }
         div.stButton > button:first-child { border-radius: 5px; }
+        /* Style for the 'New' badge logic if used in text, though we use columns now */
     </style>
 """, unsafe_allow_html=True)
 
@@ -30,7 +27,7 @@ if 'selected_code' not in st.session_state:
     st.session_state.selected_code = None
 
 # ==========================================
-# 🗄️ SQLITE DATABASE (STATE MANAGEMENT)
+# 🗄️ SQLITE DATABASE
 # ==========================================
 def init_db():
     conn = sqlite3.connect(DB_FILE, check_same_thread=False)
@@ -50,14 +47,17 @@ def get_db_lists():
     history = {row[0] for row in c.execute('SELECT code FROM history').fetchall()}
     return hidden, saved, history
 
-def db_toggle_save(code):
+def db_toggle_save(code, action):
+    """ action: True (Save), False (Unsave) """
     c = conn.cursor()
-    try:
-        c.execute('INSERT INTO saved (code, timestamp) VALUES (?, ?)', (code, datetime.now()))
-        st.toast(f"✅ Licitación {code} guardada.")
-    except sqlite3.IntegrityError:
+    if action:
+        c.execute('INSERT OR REPLACE INTO saved (code, timestamp) VALUES (?, ?)', (code, datetime.now()))
+        # If it was hidden, remove from hidden
+        c.execute('DELETE FROM hidden WHERE code = ?', (code,))
+        st.toast(f"✅ Guardado: {code}")
+    else:
         c.execute('DELETE FROM saved WHERE code = ?', (code,))
-        st.toast(f"❌ Licitación {code} eliminada de guardadas.")
+        st.toast(f"❌ Removido: {code}")
     conn.commit()
 
 def db_hide_permanent(code):
@@ -65,7 +65,7 @@ def db_hide_permanent(code):
     c.execute('DELETE FROM saved WHERE code = ?', (code,))
     c.execute('INSERT OR REPLACE INTO hidden (code, timestamp) VALUES (?, ?)', (code, datetime.now()))
     conn.commit()
-    st.toast(f"🗑️ Licitación {code} ocultada.")
+    st.toast(f"🗑️ Ocultado: {code}")
 
 def db_mark_seen(codes):
     if not codes: return
@@ -76,7 +76,7 @@ def db_mark_seen(codes):
     conn.commit()
 
 # ==========================================
-# 🧮 HELPER FUNCTIONS
+# 🛠️ DATA PROCESSING
 # ==========================================
 def clean_money_string(text):
     if not text: return 0
@@ -86,217 +86,301 @@ def clean_money_string(text):
     except: pass
     return 0
 
-def estimate_monto_from_text(text):
-    if not text: return 0, "No informado"
+def estimate_monto(text):
+    if not text: return 0
     matches = re.findall(r'(\d[\d\.]*)', text)
-    numbers = []
-    for m in matches:
+    if matches:
         try:
-            val = int(m.replace(".", ""))
-            numbers.append(val)
+            return float(matches[0].replace(".", "")) * UTM_VALUE
         except: pass
-    numbers = sorted(numbers)
-    if not numbers: return 0, "No detectado"
-    return numbers[0] * UTM_VALUE, "Est. UTM"
+    return 0
 
-# ==========================================
-# 🛠️ DATA LOADING
-# ==========================================
 @st.cache_data
-def load_data(json_path):
-    if not os.path.exists(json_path):
+def load_data():
+    if not os.path.exists(JSON_FILE):
         return pd.DataFrame(), {}
     
-    with open(json_path, 'r', encoding='utf-8') as f:
+    with open(JSON_FILE, 'r', encoding='utf-8') as f:
         data = json.load(f)
     
     rows = []
-    full_details_map = {}
+    full_map = {}
     
     for item in data:
         code = item.get("CodigoExterno")
         
-        # Monto Logic
-        monto_final = 0
-        api_monto = item.get("MontoEstimado")
-        if api_monto and float(api_monto) > 0:
-            monto_final = float(api_monto)
+        # Monto
+        monto = 0
+        if item.get("MontoEstimado") and float(item.get("MontoEstimado") or 0) > 0:
+            monto = float(item.get("MontoEstimado"))
         else:
             ext = item.get("ExtendedMetadata", {}).get("Section_1_Características", {})
-            p_val = clean_money_string(ext.get("Presupuesto"))
-            if p_val > 0: monto_final = p_val
-            else:
-                est, _ = estimate_monto_from_text(ext.get("Tipo de Licitación", ""))
-                monto_final = est
-        
-        # Display Name Truncation
-        name_clean = item.get("Nombre", "")
-        
-        row = {
-            "Estado": "", # Placeholder
+            monto = clean_money_string(ext.get("Presupuesto"))
+            if monto == 0:
+                monto = estimate_monto(ext.get("Tipo de Licitación", ""))
+
+        # Fecha handling (Convert to proper date object for filtering)
+        fecha_str = item.get("Fechas", {}).get("FechaPublicacion", "")[:10]
+        fecha_obj = None
+        try:
+            fecha_obj = datetime.strptime(fecha_str, "%Y-%m-%d").date()
+        except: pass
+
+        rows.append({
             "Codigo": code,
-            "Nombre": name_clean,
-            "Monto": monto_final,
-            "Fecha": item.get("Fechas", {}).get("FechaPublicacion", "")[:10] if item.get("Fechas") else "",
+            "Nombre": item.get("Nombre", ""),
             "Organismo": item.get("Comprador", {}).get("NombreOrganismo", ""),
-        }
-        rows.append(row)
-        full_details_map[code] = item 
+            "Categoria": item.get("Match_Category", "Sin Categoría"), # From scraper.py logic
+            "Monto": monto,
+            "Fecha": fecha_obj, 
+            "URL": item.get("URL_Publica")
+        })
+        full_map[code] = item
+        
+    return pd.DataFrame(rows), full_map
 
-    return pd.DataFrame(rows), full_details_map
-
-# Load Data
-df_raw, full_map = load_data(JSON_FILE)
-
-# --- APPLY DB STATE ---
+# Load
+df_raw, full_map = load_data()
 hidden_ids, saved_ids, history_ids = get_db_lists()
 
-if not df_raw.empty:
-    # 1. Filter out Hidden
-    df_visible = df_raw[~df_raw["Codigo"].isin(hidden_ids)].copy()
-    
-    # 2. Identify "New" (Not in history)
-    # Logic: If it is NOT in history, it is New.
-    new_mask = ~df_visible["Codigo"].isin(history_ids)
-    
-    # 3. Assign Status Label
-    df_visible["Estado"] = "Leído"
-    df_visible.loc[new_mask, "Estado"] = "🆕 Nuevo"
-    df_visible.loc[df_visible["Codigo"].isin(saved_ids), "Estado"] = "⭐ Guardado"
-    
-    # 4. Auto-update History for "New" items (so they aren't new next time)
-    new_codes = df_visible.loc[new_mask, "Codigo"].tolist()
-    if new_codes:
-        db_mark_seen(new_codes)
-    
-    # 5. Create specific subsets
-    df_saved = df_visible[df_visible["Codigo"].isin(saved_ids)].copy()
-
-else:
-    df_visible = pd.DataFrame()
-    df_saved = pd.DataFrame()
-
 # ==========================================
-# 🖥️ UI LAYOUT
+# 🔍 FILTERS (SIDEBAR)
 # ==========================================
 with st.sidebar:
-    st.title("🎛️ Control")
-    st.metric("Disponibles", len(df_visible))
-    st.metric("Nuevas (Hoy)", len(new_codes) if 'new_codes' in locals() else 0)
-    st.metric("Guardadas", len(df_saved))
+    st.title("🎛️ Filtros")
     
+    # 1. Date Range Filter
+    if not df_raw.empty:
+        min_d = df_raw["Fecha"].min()
+        max_d = df_raw["Fecha"].max()
+        # Handle cases where dates might be NaT
+        if pd.isna(min_d): min_d = date.today()
+        if pd.isna(max_d): max_d = date.today()
+        
+        date_range = st.date_input("📅 Rango Fecha Publicación", [min_d, max_d])
+    else:
+        date_range = []
+
+    # 2. Category Filter
+    all_cats = sorted(df_raw["Categoria"].astype(str).unique().tolist()) if not df_raw.empty else []
+    sel_cats = st.multiselect("🏷️ Categoría", all_cats, default=[])
+    
+    # 3. Organismo Filter
+    all_orgs = sorted(df_raw["Organismo"].astype(str).unique().tolist()) if not df_raw.empty else []
+    sel_orgs = st.multiselect("🏢 Organismo", all_orgs, default=[])
+
+    st.divider()
     if st.button("🔄 Refrescar Datos", use_container_width=True):
         st.cache_data.clear()
         st.rerun()
 
-    st.divider()
-    if st.session_state.selected_code:
-        st.info(f"Viendo: {st.session_state.selected_code}")
-        if st.button("🔙 Deseleccionar"):
-            st.session_state.selected_code = None
-            st.rerun()
+# ==========================================
+# 🧠 APPLY FILTERS & LOGIC
+# ==========================================
+if not df_raw.empty:
+    # A. Filter Hidden (Base)
+    df_visible = df_raw[~df_raw["Codigo"].isin(hidden_ids)].copy()
 
-st.title("🏗️ Monitor Licitaciones IDIEM")
+    # B. Apply Sidebar Filters
+    if len(date_range) == 2:
+        df_visible = df_visible[
+            (df_visible["Fecha"] >= date_range[0]) & 
+            (df_visible["Fecha"] <= date_range[1])
+        ]
+    if sel_cats:
+        df_visible = df_visible[df_visible["Categoria"].isin(sel_cats)]
+    if sel_orgs:
+        df_visible = df_visible[df_visible["Organismo"].isin(sel_orgs)]
+
+    # C. Prepare UI Columns
+    # 1. New Flag
+    new_mask = ~df_visible["Codigo"].isin(history_ids)
+    df_visible["Nuevo"] = False
+    df_visible.loc[new_mask, "Nuevo"] = True
+    
+    # 2. Saved Flag (Checkbox)
+    df_visible["⭐"] = df_visible["Codigo"].isin(saved_ids)
+    
+    # 3. Delete Flag (Checkbox - Default False)
+    df_visible["🗑️"] = False
+    
+    # D. Mark New as Seen (in DB)
+    new_codes = df_visible.loc[new_mask, "Codigo"].tolist()
+    if new_codes:
+        db_mark_seen(new_codes)
+        
+    # E. Create Saved Subset for Tab 2
+    df_saved_view = df_raw[df_raw["Codigo"].isin(saved_ids)].copy()
+    df_saved_view["⭐"] = True
+    df_saved_view["🗑️"] = False
+    df_saved_view["Nuevo"] = False
+
+else:
+    df_visible = pd.DataFrame()
+    df_saved_view = pd.DataFrame()
+
+# ==========================================
+# 🖥️ MAIN UI
+# ==========================================
+st.title("Monitor Licitaciones IDIEM")
 
 tab_main, tab_saved, tab_detail = st.tabs(["📥 Disponibles", "⭐ Guardadas", "📄 Ficha Técnica"])
 
-# --- GRID FUNCTION (NATIVE DATAFRAME) ---
-def render_native_grid(df, key):
-    if df.empty:
-        st.info("No hay datos para mostrar.")
-        return
-
-    # 🎨 Styling: Green for New, Yellow for Saved
-    def highlight_status(val):
-        if 'Nuevo' in str(val):
-            return 'background-color: #d4edda; color: #155724; font-weight: bold'
-        elif 'Guardado' in str(val):
-            return 'background-color: #fff3cd; color: #856404; font-weight: bold'
-        return ''
-
-    # Apply Style
-    styled_df = df.style.map(highlight_status, subset=['Estado'])
+# --- DATA EDITOR HANDLER ---
+def handle_editor_changes(edited_df, original_df):
+    """Detects clicks on checkboxes and updates DB."""
+    # 1. Detect Save Changes
+    changes_save = edited_df["⭐"] != original_df["⭐"]
+    changed_rows_save = edited_df[changes_save]
     
-    # Formatting Monto
-    styled_df = styled_df.format({"Monto": "${:,.0f}"})
+    for idx, row in changed_rows_save.iterrows():
+        code = row["Codigo"]
+        is_checked = row["⭐"]
+        db_toggle_save(code, is_checked)
+        return True # Trigger rerun
 
-    # Render with Selection
-    event = st.dataframe(
-        styled_df,
-        column_order=["Estado", "Codigo", "Nombre", "Monto", "Organismo", "Fecha"],
-        hide_index=True,
-        on_select="rerun",
-        selection_mode="single-row",
-        use_container_width=True,
-        height=500,
-        key=key
-    )
+    # 2. Detect Delete Clicks
+    # Note: Trigger if User checks the Trash bin
+    changes_hide = edited_df["🗑️"] == True 
+    changed_rows_hide = edited_df[changes_hide]
+    
+    for idx, row in changed_rows_hide.iterrows():
+        code = row["Codigo"]
+        db_hide_permanent(code)
+        return True
+        
+    return False
 
-    # Handle Selection
-    if event.selection.rows:
-        idx = event.selection.rows[0]
-        # Map visual index back to dataframe index
-        code = df.iloc[idx]["Codigo"]
-        if st.session_state.selected_code != code:
-            st.session_state.selected_code = code
+# --- TAB 1: DISPONIBLES ---
+with tab_main:
+    st.caption(f"Mostrando {len(df_visible)} licitaciones según filtros.")
+    
+    if not df_visible.empty:
+        # Configuration for the Editable Grid
+        column_cfg = {
+            "⭐": st.column_config.CheckboxColumn("Guardar", help="Marcar como interesante", width="small"),
+            "🗑️": st.column_config.CheckboxColumn("Ocultar", help="Mover a papelera", width="small"),
+            "Nuevo": st.column_config.CheckboxColumn("🆕", width="small", disabled=True), # Read-only
+            "Codigo": st.column_config.TextColumn("ID", width="medium"),
+            "Nombre": st.column_config.TextColumn("Nombre Licitación", width="large"),
+            "Categoria": st.column_config.TextColumn("Categoría", width="medium"),
+            "Monto": st.column_config.NumberColumn("Monto ($)", format="$%d"),
+            "Fecha": st.column_config.DateColumn("Fecha", format="DD/MM/YYYY"),
+            "URL": st.column_config.LinkColumn("Link", display_text="Ver"),
+            "Organismo": st.column_config.TextColumn("Organismo"),
+        }
+        
+        # We use a key based on length/filter to ensure freshness
+        unique_key = f"editor_main_{len(df_visible)}_{st.session_state.get('last_update', 0)}"
+
+        edited_main = st.data_editor(
+            df_visible,
+            column_config=column_cfg,
+            column_order=["⭐", "🗑️", "Nuevo", "Codigo", "Nombre", "Categoria", "Monto", "Fecha", "Organismo"],
+            hide_index=True,
+            use_container_width=True,
+            height=600,
+            key=unique_key,
+            on_select="rerun", # Allow row selection
+            selection_mode="single-row"
+        )
+        
+        # Detect Checkbox Clicks
+        if handle_editor_changes(edited_main, df_visible):
+            st.session_state.last_update = datetime.now().timestamp()
             st.rerun()
 
-# --- TAB CONTENT ---
-with tab_main:
-    render_native_grid(df_visible, "grid_main")
+        # Detect Row Selection (for Detail View)
+        if len(edited_main.selection.rows) > 0:
+            idx = edited_main.selection.rows[0]
+            code = df_visible.iloc[idx]["Codigo"]
+            if st.session_state.selected_code != code:
+                st.session_state.selected_code = code
+                st.rerun()
 
+# --- TAB 2: GUARDADAS ---
 with tab_saved:
-    render_native_grid(df_saved, "grid_saved")
+    if not df_saved_view.empty:
+        column_cfg_saved = {
+            "⭐": st.column_config.CheckboxColumn("Guardada", width="small"),
+            "🗑️": st.column_config.CheckboxColumn("Ocultar", width="small"),
+            "Nuevo": st.column_config.Column(hidden=True),
+            "Codigo": st.column_config.TextColumn("ID", width="medium"),
+            "Nombre": st.column_config.TextColumn("Nombre", width="large"),
+            "Monto": st.column_config.NumberColumn("Monto", format="$%d"),
+            "Fecha": st.column_config.DateColumn("Fecha", format="DD/MM/YYYY"),
+        }
+        
+        unique_key_saved = f"editor_saved_{len(df_saved_view)}_{st.session_state.get('last_update', 0)}"
+        
+        edited_saved = st.data_editor(
+            df_saved_view,
+            column_config=column_cfg_saved,
+            column_order=["⭐", "Codigo", "Nombre", "Categoria", "Monto", "Fecha", "Organismo"],
+            hide_index=True,
+            use_container_width=True,
+            key=unique_key_saved,
+            on_select="rerun",
+            selection_mode="single-row"
+        )
+        
+        if handle_editor_changes(edited_saved, df_saved_view):
+            st.session_state.last_update = datetime.now().timestamp()
+            st.rerun()
+            
+        if len(edited_saved.selection.rows) > 0:
+            idx = edited_saved.selection.rows[0]
+            code = df_saved_view.iloc[idx]["Codigo"]
+            if st.session_state.selected_code != code:
+                st.session_state.selected_code = code
+                st.rerun()
+    else:
+        st.info("No tienes licitaciones guardadas.")
 
+# --- TAB 3: DETAIL VIEW ---
 with tab_detail:
     if st.session_state.selected_code and st.session_state.selected_code in full_map:
         code = st.session_state.selected_code
         data = full_map[code]
         
-        # --- ACTION BAR ---
-        c1, c2, c3 = st.columns([1.5, 1.5, 4])
+        # Header
+        st.subheader(data.get("Nombre"))
+        st.caption(f"ID: {code} | Categ: {data.get('Match_Category', 'General')}")
+        
+        # Actions (Backup buttons in detail view)
+        c1, c2 = st.columns([1, 4])
         is_saved = code in saved_ids
-        
         with c1:
-            label = "❌ Quitar de Guardadas" if is_saved else "⭐ Guardar Interés"
-            type_btn = "secondary" if is_saved else "primary"
-            if st.button(label, type=type_btn, use_container_width=True):
-                db_toggle_save(code)
-                st.rerun()
-        
-        with c2:
-            if st.button("🗑️ Ocultar (Irrelevante)", type="secondary", use_container_width=True):
-                db_hide_permanent(code)
-                st.session_state.selected_code = None
-                st.rerun()
+             if st.button("⭐/❌ Toggle Guardar", key="btn_detail_save"):
+                 db_toggle_save(code, not is_saved)
+                 st.rerun()
         
         st.divider()
         
-        # --- DETAIL VIEW ---
-        st.subheader(data.get("Nombre"))
-        st.caption(f"ID: {code} | Organismo: {data.get('Comprador', {}).get('NombreOrganismo', '')}")
-        
-        sec1 = data.get("ExtendedMetadata", {}).get("Section_1_Características", {})
+        # Content
         col1, col2 = st.columns(2)
+        sec1 = data.get("ExtendedMetadata", {}).get("Section_1_Características", {})
+        
         with col1:
+             st.write(f"**Organismo:** {data.get('Comprador', {}).get('NombreOrganismo', '-')}")
              st.write(f"**Tipo:** {sec1.get('Tipo de Licitación', '-')}")
              st.write(f"**Cierre:** {data.get('Fechas', {}).get('FechaCierre', '')}")
+             
         with col2:
-             st.markdown(f"[🔗 Ver en MercadoPúblico]({data.get('URL_Publica')})")
-             pres = sec1.get("Presupuesto")
-             if pres: st.write(f"**Presupuesto:** :green[{pres}]")
-             elif data.get("MontoEstimado"): st.write(f"**Monto:** :blue[${float(data.get('MontoEstimado',0)):,.0f}]")
+             st.markdown(f"[🔗 Abrir en MercadoPúblico]({data.get('URL_Publica')})")
+             if data.get("MontoEstimado"): 
+                 st.write(f"**Monto:** :blue[${float(data.get('MontoEstimado')):,.0f}]")
+             elif sec1.get("Presupuesto"):
+                 st.write(f"**Presupuesto:** {sec1.get('Presupuesto')}")
+
+        st.markdown("##### Descripción")
+        st.info(data.get("Descripcion", ""))
         
-        st.markdown("##### 📝 Descripción")
-        st.info(data.get("Descripcion", "No disponible"))
-        
-        # Items
         items = data.get('Items', {}).get('Listado', [])
         if not items and 'DetalleArticulos' in data: items = data['DetalleArticulos']
         
         if items:
-            st.markdown("###### 📦 Items / Rubros")
+            st.markdown("###### Items")
             st.dataframe(pd.json_normalize(items), use_container_width=True)
-            
     else:
-        st.markdown("<br><br><h3 style='text-align: center; color: #ccc;'>👈 Selecciona una licitación</h3>", unsafe_allow_html=True)
+        st.markdown("<br><h3 style='text-align:center; color:#ccc'>👈 Selecciona una fila para ver detalle</h3>", unsafe_allow_html=True)
