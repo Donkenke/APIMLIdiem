@@ -284,10 +284,10 @@ def handle_editor_changes(edited_df, original_df):
 # --- COLUMNS CONFIGURATION ---
 common_config = {
     # 1. URL
-    "URL": st.column_config.LinkColumn("🌐", display_text="🌐", width="small"),
+    "URL": st.column_config.LinkColumn("Url", display_text="🌐"),
     
     # 2. Guardar
-    "Guardar": st.column_config.CheckboxColumn("💾", width="small", help="Guardar"),
+    "Guardar": st.column_config.CheckboxColumn("💾", help="Guardar"),
     
     # 3. Ocultar
     "Ocultar": st.column_config.CheckboxColumn("🗑️", width="small", help="Ocultar"),
@@ -300,7 +300,7 @@ common_config = {
     # Rest
     "Nombre": st.column_config.TextColumn("Nombre Licitación", width="large"),
     "Organismo": st.column_config.TextColumn("Organismo", width="medium"),
-    "Monto": st.column_config.TextColumn("Monto ($)", width="medium"), 
+    "Monto": st.column_config.TextColumn("Monto ($)"), 
     "Fecha Pub": st.column_config.TextColumn("Pub."),
     "Fecha Cierre": st.column_config.TextColumn("Cierre"),
     "Categoria": st.column_config.TextColumn("Categ.", width="medium"),
@@ -308,7 +308,7 @@ common_config = {
     "Visto": st.column_config.CheckboxColumn("Visto", disabled=True, help="Check = Visto, Vacío = Nuevo"),
 }
 
-ordered_cols = ["URL", "Guardar", "Ocultar", "Visto", "Codigo", "Nombre", "Organismo", "Monto", "Fecha Pub", "Fecha Cierre", "Categoria"]
+ordered_cols = ["URL", "Guardar", "Ocultar""Codigo", "Nombre", "Organismo", "Monto", "Fecha Pub", "Fecha Cierre", "Categoria", "Visto"]
 
 # --- TAB 1: DISPONIBLES ---
 with tab_main:
