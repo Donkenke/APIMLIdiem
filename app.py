@@ -18,16 +18,6 @@ st.markdown("""
     <style>
         .block-container { padding-top: 1rem; padding-bottom: 2rem; }
         div.stButton > button:first-child { border-radius: 5px; }
-        .legend-box {
-            display: inline-block;
-            padding: 2px 8px;
-            border-radius: 4px;
-            font-size: 0.85em;
-            font-weight: bold;
-            margin-right: 10px;
-        }
-        .exact { background-color: #d4edda; color: #155724; border: 1px solid #c3e6cb; }
-        .est { background-color: #fff3cd; color: #856404; border: 1px solid #ffeeba; }
     </style>
 """, unsafe_allow_html=True)
 
@@ -142,9 +132,9 @@ def load_data():
         if not cat or cat == "Sin Categoría":
             cat = get_category(name)
         
-        # --- MONTO & TYPE LOGIC ---
+        # --- MONTO LOGIC ---
         monto = 0
-        monto_tipo = "Exacto" # Default
+        monto_tipo = "Exacto"
         
         if item.get("MontoEstimado") and float(item.get("MontoEstimado") or 0) > 0:
             monto = float(item.get("MontoEstimado"))
@@ -162,7 +152,6 @@ def load_data():
         # --- DATES ---
         fechas = item.get("Fechas") or {}
         
-        # Publicacion
         raw_pub = fechas.get("FechaPublicacion")
         f_pub_str = str(raw_pub)[:10] if raw_pub else ""
         f_pub_obj = None
@@ -170,11 +159,9 @@ def load_data():
             try: f_pub_obj = datetime.strptime(f_pub_str, "%Y-%m-%d").date()
             except: pass
         
-        # Cierre with Warning
         raw_cierre = fechas.get("FechaCierre")
         f_cierre_str = str(raw_cierre)[:10] if raw_cierre else ""
         f_cierre_obj = None
-        
         if f_cierre_str:
             try:
                 f_cierre_obj = datetime.strptime(f_cierre_str, "%Y-%m-%d").date()
@@ -192,7 +179,7 @@ def load_data():
             "Categoria": cat,
             "Monto_Num": monto,
             "Monto": format_clp(monto),
-            "Monto_Tipo": monto_tipo, # Hidden column for styling
+            "Monto_Tipo": monto_tipo, # Used for styling
             "Fecha Pub": f_pub_str,
             "FechaPubObj": f_pub_obj,
             "Fecha Cierre": f_cierre_str,
@@ -203,6 +190,7 @@ def load_data():
         
     return pd.DataFrame(rows), full_map
 
+# Load Data
 df_raw, full_map = load_data()
 hidden_ids, saved_ids, history_ids = get_db_lists()
 
@@ -279,17 +267,17 @@ with st.expander("🔎 Ver Detalle (Buscar por ID)", expanded=False):
 
 tab_main, tab_saved, tab_detail = st.tabs(["📥 Disponibles", "⭐ Guardadas", "📄 Ficha Técnica"])
 
-# --- STYLING LOGIC ---
-def apply_monto_color(df):
-    """Applies background color to Monto based on Monto_Tipo"""
-    def highlight_monto(row):
+# --- STYLING LOGIC (Text Color Only) ---
+def apply_text_color(df):
+    """Applies text color to Monto based on Monto_Tipo"""
+    def color_monto(row):
         color = ''
         if row['Monto_Tipo'] == 'Estimado':
-            color = 'background-color: #fff3cd; color: #856404;' # Yellow/Warning
+            color = 'color: #d97706; font-weight: bold;' # Orange
         elif row['Monto_Tipo'] == 'Exacto':
-            color = 'background-color: #d4edda; color: #155724;' # Green/Exact
+            color = 'color: #16a34a; font-weight: bold;' # Green
         return [color if col == 'Monto' else '' for col in row.index]
-    return df.style.apply(highlight_monto, axis=1)
+    return df.style.apply(color_monto, axis=1)
 
 def handle_changes(edited, original):
     if edited["Guardar"].ne(original["Guardar"]).any():
@@ -302,7 +290,6 @@ def handle_changes(edited, original):
         return True
     return False
 
-# Common Config
 col_config = {
     "URL": st.column_config.LinkColumn("🔗", display_text="🔗", width="small"),
     "Guardar": st.column_config.CheckboxColumn("💾", width="small"),
@@ -311,7 +298,6 @@ col_config = {
     "Codigo": st.column_config.TextColumn("ID", width="small"),
     "Nombre": st.column_config.TextColumn("Nombre Licitación", width="large"),
     "Organismo": st.column_config.TextColumn("Organismo", width="medium"),
-    # Monto MUST be disabled for style to apply in data_editor
     "Monto": st.column_config.TextColumn("Monto ($)", width="medium", disabled=True), 
     "Fecha Pub": st.column_config.TextColumn("Publicado", width="small"),
     "Fecha Cierre": st.column_config.TextColumn("Cierre", width="small"),
@@ -321,21 +307,16 @@ ordered = ["URL", "Guardar", "Ocultar", "Visto", "Codigo", "Nombre", "Organismo"
 
 # --- TAB 1 ---
 with tab_main:
-    # Legend
-    st.markdown("""
-        <div style="margin-bottom: 10px;">
-            <span class="legend-box exact">🟢 Monto Exacto (API/Bases)</span>
-            <span class="legend-box est">🟡 Monto Estimado (Cálculo IDIEM)</span>
-        </div>
-    """, unsafe_allow_html=True)
+    # Simple Note (Not Labels)
+    st.caption("Nota: Los montos en **verde** son exactos (API), los en **naranjo** son estimados.")
     
     if not df_visible.empty:
         df_disp = df_visible.sort_values(by=["FechaPubObj"], ascending=False)
-        styled_df = apply_monto_color(df_disp)
+        styled_df = apply_text_color(df_disp)
         
         ukey = f"main_{len(df_disp)}_{st.session_state.get('last_update',0)}"
         edited = st.data_editor(
-            styled_df, # Pass Styler
+            styled_df, 
             column_config=col_config,
             column_order=ordered,
             hide_index=True,
@@ -349,15 +330,10 @@ with tab_main:
 
 # --- TAB 2 ---
 with tab_saved:
-    st.markdown("""
-        <div style="margin-bottom: 10px;">
-            <span class="legend-box exact">🟢 Monto Exacto</span>
-            <span class="legend-box est">🟡 Monto Estimado</span>
-        </div>
-    """, unsafe_allow_html=True)
+    st.caption("Nota: Los montos en **verde** son exactos, los en **naranjo** son estimados.")
     
     if not df_saved_view.empty:
-        styled_saved = apply_monto_color(df_saved_view)
+        styled_saved = apply_text_color(df_saved_view)
         ukey_s = f"saved_{len(df_saved_view)}_{st.session_state.get('last_update',0)}"
         edited_s = st.data_editor(
             styled_saved,
@@ -403,7 +379,6 @@ with tab_detail:
         with c2:
             st.markdown(f"[🔗 Link MercadoPúblico]({data.get('URL_Publica')})")
             
-            # Monto Detail Logic
             m_est = data.get("MontoEstimado")
             if m_est and float(m_est) > 0:
                 st.markdown(f"**Monto (API):** :green[{format_clp(float(m_est))}]")
