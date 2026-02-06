@@ -295,7 +295,7 @@ common_config = {
     
     
     # 5. Codigo
-    "Codigo": st.column_config.TextColumn("ID", width="small"),
+    "Codigo": st.column_config.TextColumn("ID", width="medium"),
     
     # Rest
     "Nombre": st.column_config.TextColumn("Nombre Licitación", width="large"),
