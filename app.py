@@ -290,7 +290,7 @@ common_config = {
     "Guardar": st.column_config.CheckboxColumn("💾", help="Guardar", width="small"),
     
     # 3. Ocultar
-    "Ocultar": st.column_config.CheckboxColumn("🗑️", width="small", help="Ocultar", width="small"),
+    "Ocultar": st.column_config.CheckboxColumn("🗑️", width="small", help="Ocultar"),
     
     
     
