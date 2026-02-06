@@ -18,6 +18,16 @@ st.markdown("""
     <style>
         .block-container { padding-top: 1rem; padding-bottom: 2rem; }
         div.stButton > button:first-child { border-radius: 5px; }
+        .legend-box {
+            display: inline-block;
+            padding: 2px 8px;
+            border-radius: 4px;
+            font-size: 0.85em;
+            font-weight: bold;
+            margin-right: 10px;
+        }
+        .exact { background-color: #d4edda; color: #155724; border: 1px solid #c3e6cb; }
+        .est { background-color: #fff3cd; color: #856404; border: 1px solid #ffeeba; }
     </style>
 """, unsafe_allow_html=True)
 
@@ -121,48 +131,70 @@ def load_data():
     
     rows = []
     full_map = {}
+    today = date.today()
     
     for item in data:
         code = item.get("CodigoExterno")
-        name = item.get("Nombre", "")
+        name = str(item.get("Nombre", "")).title()
+        org_name = str(item.get("Comprador", {}).get("NombreOrganismo", "")).title()
         
         cat = item.get("Match_Category")
         if not cat or cat == "Sin Categoría":
             cat = get_category(name)
         
+        # --- MONTO & TYPE LOGIC ---
         monto = 0
+        monto_tipo = "Exacto" # Default
+        
         if item.get("MontoEstimado") and float(item.get("MontoEstimado") or 0) > 0:
             monto = float(item.get("MontoEstimado"))
+            monto_tipo = "Exacto"
         else:
             ext = item.get("ExtendedMetadata", {}).get("Section_1_Características", {})
             monto = clean_money_string(ext.get("Presupuesto"))
-            if monto == 0:
+            if monto > 0:
+                monto_tipo = "Exacto"
+            else:
                 monto = estimate_monto(ext.get("Tipo de Licitación", ""))
+                if monto > 0:
+                    monto_tipo = "Estimado"
 
-        fechas = item.get("Fechas")
-        if not fechas: fechas = {} 
+        # --- DATES ---
+        fechas = item.get("Fechas") or {}
         
+        # Publicacion
         raw_pub = fechas.get("FechaPublicacion")
-        f_pub = str(raw_pub)[:10] if raw_pub else ""
+        f_pub_str = str(raw_pub)[:10] if raw_pub else ""
+        f_pub_obj = None
+        if f_pub_str:
+            try: f_pub_obj = datetime.strptime(f_pub_str, "%Y-%m-%d").date()
+            except: pass
         
+        # Cierre with Warning
         raw_cierre = fechas.get("FechaCierre")
         f_cierre_str = str(raw_cierre)[:10] if raw_cierre else ""
-        
         f_cierre_obj = None
+        
         if f_cierre_str:
             try:
                 f_cierre_obj = datetime.strptime(f_cierre_str, "%Y-%m-%d").date()
-            except: 
-                pass
+                delta = (f_cierre_obj - today).days
+                if 0 <= delta <= 7:
+                    f_cierre_str = f"{f_cierre_str} ⚠️"
+                elif delta < 0:
+                     f_cierre_str = f"{f_cierre_str} (Cerrada)"
+            except: pass
 
         rows.append({
             "Codigo": code,
             "Nombre": name,
-            "Organismo": item.get("Comprador", {}).get("NombreOrganismo", ""),
+            "Organismo": org_name,
             "Categoria": cat,
             "Monto_Num": monto,
             "Monto": format_clp(monto),
-            "Fecha Pub": f_pub,
+            "Monto_Tipo": monto_tipo, # Hidden column for styling
+            "Fecha Pub": f_pub_str,
+            "FechaPubObj": f_pub_obj,
             "Fecha Cierre": f_cierre_str,
             "FechaCierreObj": f_cierre_obj,
             "URL": item.get("URL_Publica")
@@ -171,16 +203,14 @@ def load_data():
         
     return pd.DataFrame(rows), full_map
 
-# Load Data
 df_raw, full_map = load_data()
 hidden_ids, saved_ids, history_ids = get_db_lists()
 
 # ==========================================
-# 🔍 FILTERS (SIDEBAR)
+# 🔍 SIDEBAR FILTERS
 # ==========================================
 with st.sidebar:
     st.title("🎛️ Filtros")
-    
     if not df_raw.empty:
         valid_dates = df_raw["FechaCierreObj"].dropna()
         if not valid_dates.empty:
@@ -206,60 +236,42 @@ with st.sidebar:
         st.rerun()
 
 # ==========================================
-# 🧠 APPLY FILTERS
+# 🖥️ MAIN UI
 # ==========================================
+st.title("Monitor Licitaciones IDIEM")
+
+# Filter Logic
 if not df_raw.empty:
-    # 1. Exclude Hidden
     df_visible = df_raw[~df_raw["Codigo"].isin(hidden_ids)].copy()
 
-    # 2. Date Filter
     if len(date_range) == 2:
         df_visible = df_visible[
             (df_visible["FechaCierreObj"] >= date_range[0]) & 
             (df_visible["FechaCierreObj"] <= date_range[1])
         ]
-        
-    # 3. Dropdown Filters
-    if sel_cats:
-        df_visible = df_visible[df_visible["Categoria"].isin(sel_cats)]
-    if sel_orgs:
-        df_visible = df_visible[df_visible["Organismo"].isin(sel_orgs)]
+    if sel_cats: df_visible = df_visible[df_visible["Categoria"].isin(sel_cats)]
+    if sel_orgs: df_visible = df_visible[df_visible["Organismo"].isin(sel_orgs)]
 
-    # 4. State Columns
     new_mask = ~df_visible["Codigo"].isin(history_ids)
-    
-    # VISTO COLUMN: True = Visto, False = Nuevo
     df_visible["Visto"] = True 
     df_visible.loc[new_mask, "Visto"] = False 
     
     df_visible["Guardar"] = df_visible["Codigo"].isin(saved_ids)
     df_visible["Ocultar"] = False
     
-    # Mark New as Seen (After determining Visto=False state for this view)
     new_codes = df_visible.loc[new_mask, "Codigo"].tolist()
-    if new_codes:
-        db_mark_seen(new_codes)
+    if new_codes: db_mark_seen(new_codes)
 
-    # Saved View
     df_saved_view = df_raw[df_raw["Codigo"].isin(saved_ids)].copy()
     df_saved_view["Guardar"] = True
     df_saved_view["Ocultar"] = False
     df_saved_view["Visto"] = True
-
 else:
     df_visible = pd.DataFrame()
     df_saved_view = pd.DataFrame()
 
-# ==========================================
-# 🖥️ MAIN UI
-# ==========================================
-st.title("Monitor Licitaciones IDIEM")
-
 # Detail Selector
-all_options = df_visible["Codigo"].tolist() if not df_visible.empty else []
-if not df_saved_view.empty: all_options.extend(df_saved_view["Codigo"].tolist())
-all_options = sorted(list(set(all_options)))
-
+all_options = sorted(list(set(df_visible["Codigo"].tolist() + df_saved_view["Codigo"].tolist())))
 with st.expander("🔎 Ver Detalle (Buscar por ID)", expanded=False):
     sel_code = st.selectbox("ID Licitación:", [""] + all_options, format_func=lambda x: f"{x} - {full_map.get(x, {}).get('Nombre','')[:60]}..." if x else "Seleccionar...")
     if sel_code and sel_code != st.session_state.selected_code:
@@ -267,132 +279,150 @@ with st.expander("🔎 Ver Detalle (Buscar por ID)", expanded=False):
 
 tab_main, tab_saved, tab_detail = st.tabs(["📥 Disponibles", "⭐ Guardadas", "📄 Ficha Técnica"])
 
-def handle_editor_changes(edited_df, original_df):
-    changes_save = edited_df["Guardar"] != original_df["Guardar"]
-    if changes_save.any():
-        row = edited_df[changes_save].iloc[0]
+# --- STYLING LOGIC ---
+def apply_monto_color(df):
+    """Applies background color to Monto based on Monto_Tipo"""
+    def highlight_monto(row):
+        color = ''
+        if row['Monto_Tipo'] == 'Estimado':
+            color = 'background-color: #fff3cd; color: #856404;' # Yellow/Warning
+        elif row['Monto_Tipo'] == 'Exacto':
+            color = 'background-color: #d4edda; color: #155724;' # Green/Exact
+        return [color if col == 'Monto' else '' for col in row.index]
+    return df.style.apply(highlight_monto, axis=1)
+
+def handle_changes(edited, original):
+    if edited["Guardar"].ne(original["Guardar"]).any():
+        row = edited[edited["Guardar"] != original["Guardar"]].iloc[0]
         db_toggle_save(row["Codigo"], row["Guardar"])
         return True
-    
-    changes_hide = edited_df["Ocultar"] == True 
-    if changes_hide.any():
-        row = edited_df[changes_hide].iloc[0]
+    if edited["Ocultar"].eq(True).any():
+        row = edited[edited["Ocultar"] == True].iloc[0]
         db_hide_permanent(row["Codigo"])
         return True
     return False
 
-# --- COLUMNS CONFIGURATION ---
-common_config = {
-    # 1. URL
-    "URL": st.column_config.LinkColumn("Url", display_text="🌐", width="small"),
-    
-    # 2. Guardar
-    "Guardar": st.column_config.CheckboxColumn("💾", help="Guardar", width="small"),
-    
-    # 3. Ocultar
-    "Ocultar": st.column_config.CheckboxColumn("🗑️", width="small", help="Ocultar"),
-    
-    
-    
-    # 5. Codigo
-    "Codigo": st.column_config.TextColumn("ID", width="medium"),
-    
-    # Rest
+# Common Config
+col_config = {
+    "URL": st.column_config.LinkColumn("🔗", display_text="🔗", width="small"),
+    "Guardar": st.column_config.CheckboxColumn("💾", width="small"),
+    "Ocultar": st.column_config.CheckboxColumn("🗑️", width="small"),
+    "Visto": st.column_config.CheckboxColumn("👁️", width="small", disabled=True),
+    "Codigo": st.column_config.TextColumn("ID", width="small"),
     "Nombre": st.column_config.TextColumn("Nombre Licitación", width="large"),
-    "Organismo": st.column_config.TextColumn("Organismo", width="large"),
-    "Monto": st.column_config.TextColumn("Monto ($)"), 
-    "Fecha Pub": st.column_config.TextColumn("Pub."),
-    "Fecha Cierre": st.column_config.TextColumn("Cierre"),
-    "Categoria": st.column_config.TextColumn("Categ.", width="medium"),
-    # 4. Visto (READ ONLY CHECKBOX)
-    "Visto": st.column_config.CheckboxColumn("Visto", disabled=True, help="Check = Visto, Vacío = Nuevo"),
+    "Organismo": st.column_config.TextColumn("Organismo", width="medium"),
+    # Monto MUST be disabled for style to apply in data_editor
+    "Monto": st.column_config.TextColumn("Monto ($)", width="medium", disabled=True), 
+    "Fecha Pub": st.column_config.TextColumn("Publicado", width="small"),
+    "Fecha Cierre": st.column_config.TextColumn("Cierre", width="small"),
+    "Categoria": st.column_config.TextColumn("Categoría", width="medium"),
 }
+ordered = ["URL", "Guardar", "Ocultar", "Visto", "Codigo", "Nombre", "Organismo", "Monto", "Fecha Pub", "Fecha Cierre", "Categoria"]
 
-ordered_cols = ["URL", "Guardar", "Ocultar", "Codigo", "Nombre", "Organismo", "Monto", "Fecha Pub", "Fecha Cierre", "Categoria", "Visto"]
-
-# --- TAB 1: DISPONIBLES ---
+# --- TAB 1 ---
 with tab_main:
-    st.caption(f"Mostrando {len(df_visible)} registros.")
+    # Legend
+    st.markdown("""
+        <div style="margin-bottom: 10px;">
+            <span class="legend-box exact">🟢 Monto Exacto (API/Bases)</span>
+            <span class="legend-box est">🟡 Monto Estimado (Cálculo IDIEM)</span>
+        </div>
+    """, unsafe_allow_html=True)
+    
     if not df_visible.empty:
-        # Sort by Visto (False first = Newest) -> Then Date
-        df_disp = df_visible.sort_values(by=["Visto", "FechaCierreObj"], ascending=[True, True]) 
+        df_disp = df_visible.sort_values(by=["FechaPubObj"], ascending=False)
+        styled_df = apply_monto_color(df_disp)
         
         ukey = f"main_{len(df_disp)}_{st.session_state.get('last_update',0)}"
-        
-        edited_main = st.data_editor(
-            df_disp,
-            column_config=common_config,
-            column_order=ordered_cols,
+        edited = st.data_editor(
+            styled_df, # Pass Styler
+            column_config=col_config,
+            column_order=ordered,
             hide_index=True,
             use_container_width=True,
             height=600,
             key=ukey
         )
-        
-        if handle_editor_changes(edited_main, df_disp):
+        if handle_changes(edited, df_disp):
             st.session_state.last_update = datetime.now().timestamp()
             st.rerun()
 
-# --- TAB 2: GUARDADAS ---
+# --- TAB 2 ---
 with tab_saved:
+    st.markdown("""
+        <div style="margin-bottom: 10px;">
+            <span class="legend-box exact">🟢 Monto Exacto</span>
+            <span class="legend-box est">🟡 Monto Estimado</span>
+        </div>
+    """, unsafe_allow_html=True)
+    
     if not df_saved_view.empty:
-        ukey_saved = f"saved_{len(df_saved_view)}_{st.session_state.get('last_update',0)}"
-        edited_saved = st.data_editor(
-            df_saved_view,
-            column_config=common_config,
-            column_order=ordered_cols,
+        styled_saved = apply_monto_color(df_saved_view)
+        ukey_s = f"saved_{len(df_saved_view)}_{st.session_state.get('last_update',0)}"
+        edited_s = st.data_editor(
+            styled_saved,
+            column_config=col_config,
+            column_order=ordered,
             hide_index=True,
             use_container_width=True,
-            key=ukey_saved
+            key=ukey_s
         )
-        if handle_editor_changes(edited_saved, df_saved_view):
+        if handle_changes(edited_s, df_saved_view):
             st.session_state.last_update = datetime.now().timestamp()
             st.rerun()
     else:
-        st.info("Sin elementos guardados.")
+        st.info("Sin guardados.")
 
-# --- TAB 3: DETALLE ---
+# --- TAB 3 (Detail) ---
 with tab_detail:
     if st.session_state.selected_code and st.session_state.selected_code in full_map:
         code = st.session_state.selected_code
         data = full_map[code]
         
-        # Determine status text for header
-        status_txt = "Guardado" if code in saved_ids else ("Nuevo" if code not in history_ids else "Visto")
-        
+        status = "Guardado" if code in saved_ids else ("Nuevo" if code not in history_ids else "Visto")
         st.subheader(data.get("Nombre"))
-        st.caption(f"ID: {code} | Estado: {status_txt}")
+        st.caption(f"ID: {code} | Estado: {status}")
         
-        c_btn, c_rest = st.columns([1, 4])
+        c_btn, _ = st.columns([1, 4])
         with c_btn:
             is_s = code in saved_ids
-            if st.button("❌ Quitar" if is_s else "⭐ Guardar", key="btn_dtl"):
+            if st.button("❌ Quitar" if is_s else "⭐ Guardar", key="d_btn"):
                 db_toggle_save(code, not is_s)
                 st.rerun()
 
         st.divider()
         c1, c2 = st.columns(2)
         sec1 = data.get("ExtendedMetadata", {}).get("Section_1_Características", {})
-        fechas_det = data.get("Fechas") or {}
+        fechas = data.get("Fechas") or {}
 
         with c1:
-             st.markdown(f"**Organismo:** {data.get('Comprador', {}).get('NombreOrganismo', '-')}")
-             st.markdown(f"**Tipo:** {sec1.get('Tipo de Licitación', '-')}")
-             st.markdown(f"**Cierre:** :red[{fechas_det.get('FechaCierre', 'No informado')}]")
+            st.markdown(f"**Organismo:** {str(data.get('Comprador', {}).get('NombreOrganismo', '-')).title()}")
+            st.markdown(f"**Tipo:** {sec1.get('Tipo de Licitación', '-')}")
+            st.markdown(f"**Cierre:** :red[{fechas.get('FechaCierre', 'No informado')}]")
+        
         with c2:
-             st.markdown(f"[🔗 Link MercadoPúblico]({data.get('URL_Publica')})")
-             m_est = data.get("MontoEstimado")
-             if m_est and float(m_est) > 0:
-                 st.markdown(f"**Monto:** :blue[{format_clp(float(m_est))}]")
-             else:
-                 st.markdown(f"**Presupuesto:** {sec1.get('Presupuesto', 'No informado')}")
+            st.markdown(f"[🔗 Link MercadoPúblico]({data.get('URL_Publica')})")
+            
+            # Monto Detail Logic
+            m_est = data.get("MontoEstimado")
+            if m_est and float(m_est) > 0:
+                st.markdown(f"**Monto (API):** :green[{format_clp(float(m_est))}]")
+            else:
+                p_text = sec1.get('Presupuesto')
+                p_clean = clean_money_string(p_text)
+                if p_clean > 0:
+                     st.markdown(f"**Presupuesto (Base):** :green[{format_clp(p_clean)}]")
+                else:
+                     est_val = estimate_monto(sec1.get('Tipo de Licitación', ''))
+                     if est_val > 0:
+                         st.markdown(f"**Monto (Estimado):** :orange[{format_clp(est_val)}]")
+                     else:
+                         st.markdown("**Monto:** No informado")
 
         st.info(data.get("Descripcion", "Sin descripción"))
-        
-        items = data.get('Items', {}).get('Listado', [])
-        if not items and 'DetalleArticulos' in data: items = data['DetalleArticulos']
+        items = data.get('Items', {}).get('Listado', []) or data.get('DetalleArticulos', [])
         if items:
             st.markdown("###### Items")
             st.dataframe(pd.json_normalize(items), use_container_width=True)
     else:
-        st.markdown("<br><h3 style='text-align:center; color:#ccc'>👈 Usa el buscador arriba para ver detalle</h3>", unsafe_allow_html=True)
+        st.markdown("<br><h3 style='text-align:center; color:#ccc'>👈 Selecciona un ID arriba</h3>", unsafe_allow_html=True)
