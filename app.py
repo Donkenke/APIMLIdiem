@@ -308,7 +308,7 @@ common_config = {
     "Visto": st.column_config.CheckboxColumn("Visto", disabled=True, help="Check = Visto, Vacío = Nuevo"),
 }
 
-ordered_cols = ["URL", "Guardar", "Ocultar""Codigo", "Nombre", "Organismo", "Monto", "Fecha Pub", "Fecha Cierre", "Categoria", "Visto"]
+ordered_cols = ["URL", "Guardar", "Ocultar", "Codigo", "Nombre", "Organismo", "Monto", "Fecha Pub", "Fecha Cierre", "Categoria", "Visto"]
 
 # --- TAB 1: DISPONIBLES ---
 with tab_main:
