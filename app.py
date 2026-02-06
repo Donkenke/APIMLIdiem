@@ -284,13 +284,13 @@ def handle_editor_changes(edited_df, original_df):
 # --- COLUMNS CONFIGURATION ---
 common_config = {
     # 1. URL
-    "URL": st.column_config.LinkColumn("Url", display_text="🌐"),
+    "URL": st.column_config.LinkColumn("Url", display_text="🌐", width="small"),
     
     # 2. Guardar
-    "Guardar": st.column_config.CheckboxColumn("💾", help="Guardar"),
+    "Guardar": st.column_config.CheckboxColumn("💾", help="Guardar", width="small"),
     
     # 3. Ocultar
-    "Ocultar": st.column_config.CheckboxColumn("🗑️", width="small", help="Ocultar"),
+    "Ocultar": st.column_config.CheckboxColumn("🗑️", width="small", help="Ocultar", width="small"),
     
     
     
@@ -299,7 +299,7 @@ common_config = {
     
     # Rest
     "Nombre": st.column_config.TextColumn("Nombre Licitación", width="large"),
-    "Organismo": st.column_config.TextColumn("Organismo", width="medium"),
+    "Organismo": st.column_config.TextColumn("Organismo", width="large"),
     "Monto": st.column_config.TextColumn("Monto ($)"), 
     "Fecha Pub": st.column_config.TextColumn("Pub."),
     "Fecha Cierre": st.column_config.TextColumn("Cierre"),
