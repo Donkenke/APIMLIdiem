@@ -4,6 +4,7 @@ requests
 urllib3
 sqlalchemy
 numpy
+st-gsheets-connection
 
 
 
