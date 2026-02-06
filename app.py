@@ -291,24 +291,32 @@ def handle_changes(edited, original):
     return False
 
 col_config = {
-    "URL": st.column_config.LinkColumn("🔗", display_text="🔗", width="small"),
+    "URL": st.column_config.LinkColumn("Link", display_text="🌐", width="small"),
     "Guardar": st.column_config.CheckboxColumn("💾", width="small"),
     "Ocultar": st.column_config.CheckboxColumn("🗑️", width="small"),
-    "Visto": st.column_config.CheckboxColumn("👁️", width="small", disabled=True),
+    "Visto": st.column_config.CheckboxColumn("Visto", width="small", disabled=True),
     "Codigo": st.column_config.TextColumn("ID", width="small"),
     "Nombre": st.column_config.TextColumn("Nombre Licitación", width="large"),
-    "Organismo": st.column_config.TextColumn("Organismo", width="medium"),
+    "Organismo": st.column_config.TextColumn("Organismo", width="large"),
     "Monto": st.column_config.TextColumn("Monto ($)", width="medium", disabled=True), 
     "Fecha Pub": st.column_config.TextColumn("Publicado", width="small"),
     "Fecha Cierre": st.column_config.TextColumn("Cierre", width="small"),
     "Categoria": st.column_config.TextColumn("Categoría", width="medium"),
 }
-ordered = ["URL", "Guardar", "Ocultar", "Visto", "Codigo", "Nombre", "Organismo", "Monto", "Fecha Pub", "Fecha Cierre", "Categoria"]
+ordered = ["URL", "Guardar", "Ocultar", "Codigo", "Nombre", "Organismo", "Monto", "Fecha Pub", "Fecha Cierre", "Categoria", "Visto"]
 
 # --- TAB 1 ---
 with tab_main:
     # Simple Note (Not Labels)
-    st.caption("Nota: Los montos en **verde** son exactos (API), los en **naranjo** son estimados.")
+    st.markdown(
+    """
+    <div style="text-align: right; font-size: 0.9rem; color: gray;">
+        Nota: Los montos en <span style="color: green;">verde</span> son exactos (API), 
+        los en <span style="color: orange;">naranjo</span> son estimados.
+    </div>
+    """,
+    unsafe_allow_html=True
+)
     
     if not df_visible.empty:
         df_disp = df_visible.sort_values(by=["FechaPubObj"], ascending=False)
@@ -330,7 +338,15 @@ with tab_main:
 
 # --- TAB 2 ---
 with tab_saved:
-    st.caption("Nota: Los montos en **verde** son exactos, los en **naranjo** son estimados.")
+    st.markdown(
+    """
+    <div style="text-align: right; font-size: 0.9rem; color: gray;">
+        Nota: Los montos en <span style="color: green;">verde</span> son exactos (API), 
+        los en <span style="color: orange;">naranjo</span> son estimados.
+    </div>
+    """,
+    unsafe_allow_html=True
+)
     
     if not df_saved_view.empty:
         styled_saved = apply_text_color(df_saved_view)
