@@ -13,11 +13,12 @@ UTM_VALUE = 69611
 JSON_FILE = "FINAL_PRODUCTION_DATA.json"
 DB_FILE = "licitaciones_state.db"
 
-# Custom CSS
+# Custom CSS for spacing and buttons
 st.markdown("""
     <style>
         .block-container { padding-top: 1rem; padding-bottom: 2rem; }
         div.stButton > button:first-child { border-radius: 5px; }
+        /* Make checkboxes center aligned if possible in future updates */
     </style>
 """, unsafe_allow_html=True)
 
@@ -25,25 +26,19 @@ if 'selected_code' not in st.session_state:
     st.session_state.selected_code = None
 
 # ==========================================
-# 🧠 CATEGORIZATION LOGIC (From Scraper)
+# 🧠 CATEGORIZATION LOGIC
 # ==========================================
 def get_category(text):
-    """Assigns category based on keywords defined in scraper.py"""
     if not text: return "General"
     text = text.upper()
-    
-    # 1. Strict Acronyms
     if re.search(r'\b(AIF|AIT|ATIF|ATOD|AFOS|ATO|ITO)\b', text): return "Inspección Técnica"
     if re.search(r'\b(PACC|PCC)\b', text): return "Sustentabilidad"
-    
-    # 2. Key Phrases
     if any(x in text for x in ["ASESORÍA INSPECCIÓN", "SUPERVISIÓN CONSTRUCCIÓN"]): return "Inspección Técnica"
     if any(x in text for x in ["ESTRUCTURAL", "MECÁNICA SUELOS", "GEOLÓGICO", "GEOTÉCNICO", "ENSAYOS", "LABORATORIO"]): return "Ingeniería y Lab"
     if any(x in text for x in ["TOPOGRÁFICO", "TOPOGRAFÍA", "LEVANTAMIENTO", "AEROFOTOGRAMETRÍA"]): return "Topografía"
     if any(x in text for x in ["ARQUITECTURA", "DISEÑO ARQUITECTÓNICO"]): return "Arquitectura"
     if any(x in text for x in ["EFICIENCIA ENERGÉTICA", "CERTIFICACIÓN", "SUSTENTABLE"]): return "Sustentabilidad"
     if any(x in text for x in ["MODELACIÓN", "BIM", "COORDINACIÓN DIGITAL"]): return "BIM / Modelación"
-    
     return "Otras Civiles"
 
 # ==========================================
@@ -113,6 +108,11 @@ def estimate_monto(text):
         except: pass
     return 0
 
+def format_clp(val):
+    """Formats number to Chilean Peso style with dots: $ 1.000.000"""
+    if not val or val == 0: return "$ 0"
+    return f"${val:,.0f}".replace(",", ".")
+
 @st.cache_data
 def load_data():
     if not os.path.exists(JSON_FILE):
@@ -128,7 +128,7 @@ def load_data():
         code = item.get("CodigoExterno")
         name = item.get("Nombre", "")
         
-        # 1. Determine Category (Use Scraper logic if missing)
+        # 1. Category
         cat = item.get("Match_Category")
         if not cat or cat == "Sin Categoría":
             cat = get_category(name)
@@ -143,11 +143,14 @@ def load_data():
             if monto == 0:
                 monto = estimate_monto(ext.get("Tipo de Licitación", ""))
 
-        # 3. Fecha
-        fecha_str = item.get("Fechas", {}).get("FechaPublicacion", "")[:10]
-        fecha_obj = None
+        # 3. Fechas
+        f_pub = item.get("Fechas", {}).get("FechaPublicacion", "")[:10]
+        f_cierre_str = item.get("Fechas", {}).get("FechaCierre", "")[:10]
+        
+        # Parse Closing Date for filtering
+        f_cierre_obj = None
         try:
-            fecha_obj = datetime.strptime(fecha_str, "%Y-%m-%d").date()
+            f_cierre_obj = datetime.strptime(f_cierre_str, "%Y-%m-%d").date()
         except: pass
 
         rows.append({
@@ -155,8 +158,11 @@ def load_data():
             "Nombre": name,
             "Organismo": item.get("Comprador", {}).get("NombreOrganismo", ""),
             "Categoria": cat,
-            "Monto": monto,
-            "Fecha": fecha_obj, 
+            "Monto_Num": monto, # Keep numeric for logic if needed
+            "Monto": format_clp(monto), # String for Display
+            "Fecha Pub": f_pub,
+            "Fecha Cierre": f_cierre_str,
+            "FechaCierreObj": f_cierre_obj, # Hidden for filtering
             "URL": item.get("URL_Publica")
         })
         full_map[code] = item
@@ -174,12 +180,13 @@ with st.sidebar:
     st.title("🎛️ Filtros")
     
     if not df_raw.empty:
-        # Date Filter
-        min_d = df_raw["Fecha"].min()
-        max_d = df_raw["Fecha"].max()
-        if pd.isna(min_d): min_d = date.today()
-        if pd.isna(max_d): max_d = date.today()
-        date_range = st.date_input("📅 Fecha Publicación", [min_d, max_d])
+        # Date Filter (Based on Fecha Cierre)
+        valid_dates = df_raw["FechaCierreObj"].dropna()
+        if not valid_dates.empty:
+            min_d, max_d = valid_dates.min(), valid_dates.max()
+            date_range = st.date_input("📅 Fecha de Cierre", [min_d, max_d])
+        else:
+            date_range = []
         
         # Category Filter
         all_cats = sorted(df_raw["Categoria"].astype(str).unique().tolist())
@@ -199,41 +206,46 @@ with st.sidebar:
         st.rerun()
 
 # ==========================================
-# 🧠 APPLY FILTERS & LOGIC
+# 🧠 APPLY FILTERS
 # ==========================================
 if not df_raw.empty:
-    # A. Filter Hidden
+    # 1. Exclude Hidden
     df_visible = df_raw[~df_raw["Codigo"].isin(hidden_ids)].copy()
 
-    # B. Apply Filters
+    # 2. Date Filter (Cierre)
     if len(date_range) == 2:
         df_visible = df_visible[
-            (df_visible["Fecha"] >= date_range[0]) & 
-            (df_visible["Fecha"] <= date_range[1])
+            (df_visible["FechaCierreObj"] >= date_range[0]) & 
+            (df_visible["FechaCierreObj"] <= date_range[1])
         ]
+        
+    # 3. Dropdown Filters
     if sel_cats:
         df_visible = df_visible[df_visible["Categoria"].isin(sel_cats)]
     if sel_orgs:
         df_visible = df_visible[df_visible["Organismo"].isin(sel_orgs)]
 
-    # C. UI Columns
+    # 4. State Columns
     new_mask = ~df_visible["Codigo"].isin(history_ids)
-    df_visible["Nuevo"] = False
-    df_visible.loc[new_mask, "Nuevo"] = True
     
-    df_visible["⭐"] = df_visible["Codigo"].isin(saved_ids)
-    df_visible["🗑️"] = False # Default unchecked
+    # "Estado" Column (Text instead of Icon)
+    df_visible["Estado"] = "Visto"
+    df_visible.loc[new_mask, "Estado"] = "🆕 Nuevo"
     
-    # Mark New as Seen
+    # Checkbox Columns
+    df_visible["Guardar"] = df_visible["Codigo"].isin(saved_ids)
+    df_visible["Ocultar"] = False
+    
+    # Mark New as Seen in DB
     new_codes = df_visible.loc[new_mask, "Codigo"].tolist()
     if new_codes:
         db_mark_seen(new_codes)
-        
+
     # Saved View
     df_saved_view = df_raw[df_raw["Codigo"].isin(saved_ids)].copy()
-    df_saved_view["⭐"] = True
-    df_saved_view["🗑️"] = False
-    df_saved_view["Nuevo"] = False
+    df_saved_view["Guardar"] = True
+    df_saved_view["Ocultar"] = False
+    df_saved_view["Estado"] = "Guardado"
 
 else:
     df_visible = pd.DataFrame()
@@ -244,141 +256,133 @@ else:
 # ==========================================
 st.title("Monitor Licitaciones IDIEM")
 
-# --- DETAIL SELECTOR (Replaces Row Click) ---
-# Since data_editor doesn't support selection, we use this dropdown
+# Detail Selector
 all_options = df_visible["Codigo"].tolist() if not df_visible.empty else []
-if df_saved_view is not None and not df_saved_view.empty:
-    all_options.extend(df_saved_view["Codigo"].tolist())
+if not df_saved_view.empty: all_options.extend(df_saved_view["Codigo"].tolist())
 all_options = sorted(list(set(all_options)))
 
-# Selector in Expander to save space
-with st.expander("🔎 Ver Detalle de Licitación (Seleccionar ID)", expanded=False):
-    sel_code = st.selectbox("Buscar por ID:", [""] + all_options, format_func=lambda x: f"{x} - {full_map.get(x, {}).get('Nombre','')[:60]}..." if x else "Seleccionar...")
+with st.expander("🔎 Ver Detalle (Buscar por ID)", expanded=False):
+    sel_code = st.selectbox("ID Licitación:", [""] + all_options, format_func=lambda x: f"{x} - {full_map.get(x, {}).get('Nombre','')[:60]}..." if x else "Seleccionar...")
     if sel_code and sel_code != st.session_state.selected_code:
         st.session_state.selected_code = sel_code
-        # No rerun needed here, tabs will handle it
 
 tab_main, tab_saved, tab_detail = st.tabs(["📥 Disponibles", "⭐ Guardadas", "📄 Ficha Técnica"])
 
 def handle_editor_changes(edited_df, original_df):
-    """Detects checkbox clicks."""
     # Save Click
-    changes_save = edited_df["⭐"] != original_df["⭐"]
+    changes_save = edited_df["Guardar"] != original_df["Guardar"]
     if changes_save.any():
         row = edited_df[changes_save].iloc[0]
-        db_toggle_save(row["Codigo"], row["⭐"])
+        db_toggle_save(row["Codigo"], row["Guardar"])
         return True
-
-    # Trash Click
-    changes_hide = edited_df["🗑️"] == True 
+    # Hide Click
+    changes_hide = edited_df["Ocultar"] == True 
     if changes_hide.any():
         row = edited_df[changes_hide].iloc[0]
         db_hide_permanent(row["Codigo"])
         return True
     return False
 
-# --- TAB 1 ---
-with tab_main:
-    st.caption(f"Registros encontrados: {len(df_visible)}")
-    
-    if not df_visible.empty:
-        # Sort: Newest first
-        df_display = df_visible.sort_values(by=["Nuevo", "Fecha"], ascending=[False, False])
-        
-        column_cfg = {
-            "⭐": st.column_config.CheckboxColumn("Guardar", width="small"),
-            "🗑️": st.column_config.CheckboxColumn("Ocultar", width="small"),
-            "Nuevo": st.column_config.CheckboxColumn("🆕", width="small", disabled=True),
-            "Codigo": st.column_config.TextColumn("ID", width="medium"),
-            "Nombre": st.column_config.TextColumn("Nombre", width="large"),
-            "Monto": st.column_config.NumberColumn("Monto", format="$%d"),
-            "URL": st.column_config.LinkColumn("Link", display_text="Abrir"),
-            "Fecha": st.column_config.DateColumn("Fecha", format="DD/MM/YYYY"),
-        }
+# --- COLUMNS CONFIGURATION ---
+# Define Widths and Types globally for consistency
+common_config = {
+    "URL": st.column_config.LinkColumn("Link", display_text="🔗", width="small"),
+    "Guardar": st.column_config.CheckboxColumn("Guardar", width="small"),
+    "Ocultar": st.column_config.CheckboxColumn("Ocultar", width="small"),
+    "Codigo": st.column_config.TextColumn("ID", width="medium"),
+    "Nombre": st.column_config.TextColumn("Nombre Licitación", width="large"),
+    "Organismo": st.column_config.TextColumn("Organismo", width="medium"),
+    "Monto": st.column_config.TextColumn("Monto ($)", width="medium"), # Pre-formatted string
+    "Fecha Pub": st.column_config.TextColumn("Publicación", width="small"),
+    "Fecha Cierre": st.column_config.TextColumn("Cierre", width="small"),
+    "Categoria": st.column_config.TextColumn("Categoría", width="medium"),
+    "Estado": st.column_config.TextColumn("Visto?", width="small", disabled=True)
+}
 
-        # Unique Key forces refresh when data changes
-        ukey = f"main_{len(df_display)}_{st.session_state.get('last_update',0)}"
+ordered_cols = ["URL", "Guardar", "Ocultar", "Codigo", "Nombre", "Organismo", "Monto", "Fecha Pub", "Fecha Cierre", "Categoria", "Estado"]
+
+# --- TAB 1: DISPONIBLES ---
+with tab_main:
+    st.caption(f"Mostrando {len(df_visible)} registros.")
+    if not df_visible.empty:
+        # Sort by Newest first
+        df_disp = df_visible.sort_values(by=["Estado", "FechaCierreObj"], ascending=[True, True]) 
+        # (New "🆕" comes before "Visto" in ascii? No, emoji handling varies. Let's rely on filter logic)
+        
+        ukey = f"main_{len(df_disp)}_{st.session_state.get('last_update',0)}"
         
         edited_main = st.data_editor(
-            df_display,
-            column_config=column_cfg,
-            column_order=["⭐", "🗑️", "Nuevo", "Categoria", "Codigo", "Nombre", "Monto", "Fecha", "URL"],
+            df_disp,
+            column_config=common_config,
+            column_order=ordered_cols,
             hide_index=True,
-            use_container_width=True,
+            use_container_width=True, # Helps "Nombre" take remaining space
             height=600,
             key=ukey
         )
         
-        if handle_editor_changes(edited_main, df_display):
+        if handle_editor_changes(edited_main, df_disp):
             st.session_state.last_update = datetime.now().timestamp()
             st.rerun()
 
-# --- TAB 2 ---
+# --- TAB 2: GUARDADAS ---
 with tab_saved:
     if not df_saved_view.empty:
         ukey_saved = f"saved_{len(df_saved_view)}_{st.session_state.get('last_update',0)}"
-        
         edited_saved = st.data_editor(
             df_saved_view,
-            column_config={
-                "⭐": st.column_config.CheckboxColumn("Guardada", width="small"),
-                "🗑️": st.column_config.CheckboxColumn("Ocultar", width="small"),
-                "Codigo": st.column_config.TextColumn("ID", width="medium"),
-                "URL": st.column_config.LinkColumn("Link", display_text="Abrir"),
-            },
-            column_order=["⭐", "Codigo", "Nombre", "Categoria", "Monto", "Fecha", "URL"],
+            column_config=common_config,
+            column_order=ordered_cols,
             hide_index=True,
             use_container_width=True,
             key=ukey_saved
         )
-        
         if handle_editor_changes(edited_saved, df_saved_view):
             st.session_state.last_update = datetime.now().timestamp()
             st.rerun()
     else:
-        st.info("No hay licitaciones guardadas.")
+        st.info("Sin elementos guardados.")
 
-# --- TAB 3 ---
+# --- TAB 3: DETALLE ---
 with tab_detail:
     if st.session_state.selected_code and st.session_state.selected_code in full_map:
         code = st.session_state.selected_code
         data = full_map[code]
         
         st.subheader(data.get("Nombre"))
-        st.caption(f"ID: {code} | Categ: {data.get('Match_Category', 'General')}")
+        st.caption(f"ID: {code} | Estado: {data.get('Estado')}")
         
-        # Actions
-        col_a, col_b = st.columns([1, 4])
-        with col_a:
+        c_btn, c_rest = st.columns([1, 4])
+        with c_btn:
             is_s = code in saved_ids
-            if st.button("❌ Quitar" if is_s else "⭐ Guardar", key="btn_det_save"):
+            if st.button("❌ Quitar" if is_s else "⭐ Guardar", key="btn_dtl"):
                 db_toggle_save(code, not is_s)
                 st.rerun()
-        
+
         st.divider()
         c1, c2 = st.columns(2)
         sec1 = data.get("ExtendedMetadata", {}).get("Section_1_Características", {})
         
         with c1:
-             st.write(f"**Organismo:** {data.get('Comprador', {}).get('NombreOrganismo', '-')}")
-             st.write(f"**Tipo:** {sec1.get('Tipo de Licitación', '-')}")
-             st.write(f"**Estado:** {sec1.get('Estado', '-')}")
+             st.markdown(f"**Organismo:** {data.get('Comprador', {}).get('NombreOrganismo', '-')}")
+             st.markdown(f"**Tipo:** {sec1.get('Tipo de Licitación', '-')}")
+             st.markdown(f"**Cierre:** :red[{data.get('Fechas', {}).get('FechaCierre', '')}]")
         with c2:
-             st.markdown(f"[🔗 Ver en MercadoPúblico]({data.get('URL_Publica')})")
-             if data.get("MontoEstimado"):
-                 st.write(f"**Monto:** :blue[${float(data.get('MontoEstimado')):,.0f}]")
+             st.markdown(f"[🔗 Link MercadoPúblico]({data.get('URL_Publica')})")
+             
+             # Monto Display
+             m_est = data.get("MontoEstimado")
+             if m_est and float(m_est) > 0:
+                 st.markdown(f"**Monto:** :blue[{format_clp(float(m_est))}]")
              else:
-                 st.write(f"**Presupuesto:** {sec1.get('Presupuesto', 'No informado')}")
+                 st.markdown(f"**Presupuesto:** {sec1.get('Presupuesto', 'No informado')}")
 
-        st.markdown("##### Descripción")
-        st.info(data.get("Descripcion", ""))
+        st.info(data.get("Descripcion", "Sin descripción"))
         
-        # Items Table
         items = data.get('Items', {}).get('Listado', [])
         if not items and 'DetalleArticulos' in data: items = data['DetalleArticulos']
-        
         if items:
             st.markdown("###### Items")
             st.dataframe(pd.json_normalize(items), use_container_width=True)
     else:
-        st.markdown("<br><h3 style='text-align:center; color:#ccc'>👈 Selecciona un ID en el buscador superior</h3>", unsafe_allow_html=True)
+        st.markdown("<br><h3 style='text-align:center; color:#ccc'>👈 Usa el buscador arriba para ver detalle</h3>", unsafe_allow_html=True)
