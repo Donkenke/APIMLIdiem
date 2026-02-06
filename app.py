@@ -13,12 +13,11 @@ UTM_VALUE = 69611
 JSON_FILE = "FINAL_PRODUCTION_DATA.json"
 DB_FILE = "licitaciones_state.db"
 
-# Custom CSS for spacing and buttons
+# Custom CSS
 st.markdown("""
     <style>
         .block-container { padding-top: 1rem; padding-bottom: 2rem; }
         div.stButton > button:first-child { border-radius: 5px; }
-        /* Make checkboxes center aligned if possible in future updates */
     </style>
 """, unsafe_allow_html=True)
 
@@ -109,7 +108,6 @@ def estimate_monto(text):
     return 0
 
 def format_clp(val):
-    """Formats number to Chilean Peso style with dots: $ 1.000.000"""
     if not val or val == 0: return "$ 0"
     return f"${val:,.0f}".replace(",", ".")
 
@@ -128,7 +126,7 @@ def load_data():
         code = item.get("CodigoExterno")
         name = item.get("Nombre", "")
         
-        # 1. Category
+        # 1. Categoría
         cat = item.get("Match_Category")
         if not cat or cat == "Sin Categoría":
             cat = get_category(name)
@@ -143,26 +141,36 @@ def load_data():
             if monto == 0:
                 monto = estimate_monto(ext.get("Tipo de Licitación", ""))
 
-        # 3. Fechas
-        f_pub = item.get("Fechas", {}).get("FechaPublicacion", "")[:10]
-        f_cierre_str = item.get("Fechas", {}).get("FechaCierre", "")[:10]
+        # 3. Fechas (Robust Extraction)
+        fechas = item.get("Fechas")
+        if not fechas: fechas = {} # Handle None if "Fechas": null
         
-        # Parse Closing Date for filtering
+        # Fecha Publicacion
+        raw_pub = fechas.get("FechaPublicacion")
+        f_pub = str(raw_pub)[:10] if raw_pub else ""
+        
+        # Fecha Cierre (This was causing the crash)
+        raw_cierre = fechas.get("FechaCierre")
+        f_cierre_str = str(raw_cierre)[:10] if raw_cierre else ""
+        
+        # Parse for Filtering
         f_cierre_obj = None
-        try:
-            f_cierre_obj = datetime.strptime(f_cierre_str, "%Y-%m-%d").date()
-        except: pass
+        if f_cierre_str:
+            try:
+                f_cierre_obj = datetime.strptime(f_cierre_str, "%Y-%m-%d").date()
+            except: 
+                pass
 
         rows.append({
             "Codigo": code,
             "Nombre": name,
             "Organismo": item.get("Comprador", {}).get("NombreOrganismo", ""),
             "Categoria": cat,
-            "Monto_Num": monto, # Keep numeric for logic if needed
-            "Monto": format_clp(monto), # String for Display
+            "Monto_Num": monto,
+            "Monto": format_clp(monto),
             "Fecha Pub": f_pub,
             "Fecha Cierre": f_cierre_str,
-            "FechaCierreObj": f_cierre_obj, # Hidden for filtering
+            "FechaCierreObj": f_cierre_obj,
             "URL": item.get("URL_Publica")
         })
         full_map[code] = item
@@ -187,6 +195,7 @@ with st.sidebar:
             date_range = st.date_input("📅 Fecha de Cierre", [min_d, max_d])
         else:
             date_range = []
+            st.warning("No hay fechas de cierre válidas para filtrar.")
         
         # Category Filter
         all_cats = sorted(df_raw["Categoria"].astype(str).unique().tolist())
@@ -212,7 +221,7 @@ if not df_raw.empty:
     # 1. Exclude Hidden
     df_visible = df_raw[~df_raw["Codigo"].isin(hidden_ids)].copy()
 
-    # 2. Date Filter (Cierre)
+    # 2. Date Filter
     if len(date_range) == 2:
         df_visible = df_visible[
             (df_visible["FechaCierreObj"] >= date_range[0]) & 
@@ -228,15 +237,13 @@ if not df_raw.empty:
     # 4. State Columns
     new_mask = ~df_visible["Codigo"].isin(history_ids)
     
-    # "Estado" Column (Text instead of Icon)
     df_visible["Estado"] = "Visto"
     df_visible.loc[new_mask, "Estado"] = "🆕 Nuevo"
     
-    # Checkbox Columns
     df_visible["Guardar"] = df_visible["Codigo"].isin(saved_ids)
     df_visible["Ocultar"] = False
     
-    # Mark New as Seen in DB
+    # Mark New as Seen
     new_codes = df_visible.loc[new_mask, "Codigo"].tolist()
     if new_codes:
         db_mark_seen(new_codes)
@@ -284,7 +291,6 @@ def handle_editor_changes(edited_df, original_df):
     return False
 
 # --- COLUMNS CONFIGURATION ---
-# Define Widths and Types globally for consistency
 common_config = {
     "URL": st.column_config.LinkColumn("Link", display_text="🔗", width="small"),
     "Guardar": st.column_config.CheckboxColumn("Guardar", width="small"),
@@ -292,7 +298,7 @@ common_config = {
     "Codigo": st.column_config.TextColumn("ID", width="medium"),
     "Nombre": st.column_config.TextColumn("Nombre Licitación", width="large"),
     "Organismo": st.column_config.TextColumn("Organismo", width="medium"),
-    "Monto": st.column_config.TextColumn("Monto ($)", width="medium"), # Pre-formatted string
+    "Monto": st.column_config.TextColumn("Monto ($)", width="medium"), 
     "Fecha Pub": st.column_config.TextColumn("Publicación", width="small"),
     "Fecha Cierre": st.column_config.TextColumn("Cierre", width="small"),
     "Categoria": st.column_config.TextColumn("Categoría", width="medium"),
@@ -305,9 +311,8 @@ ordered_cols = ["URL", "Guardar", "Ocultar", "Codigo", "Nombre", "Organismo", "M
 with tab_main:
     st.caption(f"Mostrando {len(df_visible)} registros.")
     if not df_visible.empty:
-        # Sort by Newest first
+        # Sort
         df_disp = df_visible.sort_values(by=["Estado", "FechaCierreObj"], ascending=[True, True]) 
-        # (New "🆕" comes before "Visto" in ascii? No, emoji handling varies. Let's rely on filter logic)
         
         ukey = f"main_{len(df_disp)}_{st.session_state.get('last_update',0)}"
         
@@ -316,7 +321,7 @@ with tab_main:
             column_config=common_config,
             column_order=ordered_cols,
             hide_index=True,
-            use_container_width=True, # Helps "Nombre" take remaining space
+            use_container_width=True,
             height=600,
             key=ukey
         )
@@ -363,14 +368,15 @@ with tab_detail:
         c1, c2 = st.columns(2)
         sec1 = data.get("ExtendedMetadata", {}).get("Section_1_Características", {})
         
+        fechas_det = data.get("Fechas") or {}
+
         with c1:
              st.markdown(f"**Organismo:** {data.get('Comprador', {}).get('NombreOrganismo', '-')}")
              st.markdown(f"**Tipo:** {sec1.get('Tipo de Licitación', '-')}")
-             st.markdown(f"**Cierre:** :red[{data.get('Fechas', {}).get('FechaCierre', '')}]")
+             st.markdown(f"**Cierre:** :red[{fechas_det.get('FechaCierre', 'No informado')}]")
         with c2:
              st.markdown(f"[🔗 Link MercadoPúblico]({data.get('URL_Publica')})")
              
-             # Monto Display
              m_est = data.get("MontoEstimado")
              if m_est and float(m_est) > 0:
                  st.markdown(f"**Monto:** :blue[{format_clp(float(m_est))}]")
