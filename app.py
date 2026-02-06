@@ -17,14 +17,34 @@ DB_FILE = "licitaciones_state.db"
 st.markdown("""
     <style>
         .block-container { padding-top: 1rem; padding-bottom: 2rem; }
-        .stDataFrame { border: 1px solid #e0e0e0; border-radius: 5px; }
         div.stButton > button:first-child { border-radius: 5px; }
-        /* Style for the 'New' badge logic if used in text, though we use columns now */
     </style>
 """, unsafe_allow_html=True)
 
 if 'selected_code' not in st.session_state:
     st.session_state.selected_code = None
+
+# ==========================================
+# 🧠 CATEGORIZATION LOGIC (From Scraper)
+# ==========================================
+def get_category(text):
+    """Assigns category based on keywords defined in scraper.py"""
+    if not text: return "General"
+    text = text.upper()
+    
+    # 1. Strict Acronyms
+    if re.search(r'\b(AIF|AIT|ATIF|ATOD|AFOS|ATO|ITO)\b', text): return "Inspección Técnica"
+    if re.search(r'\b(PACC|PCC)\b', text): return "Sustentabilidad"
+    
+    # 2. Key Phrases
+    if any(x in text for x in ["ASESORÍA INSPECCIÓN", "SUPERVISIÓN CONSTRUCCIÓN"]): return "Inspección Técnica"
+    if any(x in text for x in ["ESTRUCTURAL", "MECÁNICA SUELOS", "GEOLÓGICO", "GEOTÉCNICO", "ENSAYOS", "LABORATORIO"]): return "Ingeniería y Lab"
+    if any(x in text for x in ["TOPOGRÁFICO", "TOPOGRAFÍA", "LEVANTAMIENTO", "AEROFOTOGRAMETRÍA"]): return "Topografía"
+    if any(x in text for x in ["ARQUITECTURA", "DISEÑO ARQUITECTÓNICO"]): return "Arquitectura"
+    if any(x in text for x in ["EFICIENCIA ENERGÉTICA", "CERTIFICACIÓN", "SUSTENTABLE"]): return "Sustentabilidad"
+    if any(x in text for x in ["MODELACIÓN", "BIM", "COORDINACIÓN DIGITAL"]): return "BIM / Modelación"
+    
+    return "Otras Civiles"
 
 # ==========================================
 # 🗄️ SQLITE DATABASE
@@ -48,11 +68,9 @@ def get_db_lists():
     return hidden, saved, history
 
 def db_toggle_save(code, action):
-    """ action: True (Save), False (Unsave) """
     c = conn.cursor()
     if action:
         c.execute('INSERT OR REPLACE INTO saved (code, timestamp) VALUES (?, ?)', (code, datetime.now()))
-        # If it was hidden, remove from hidden
         c.execute('DELETE FROM hidden WHERE code = ?', (code,))
         st.toast(f"✅ Guardado: {code}")
     else:
@@ -108,8 +126,14 @@ def load_data():
     
     for item in data:
         code = item.get("CodigoExterno")
+        name = item.get("Nombre", "")
         
-        # Monto
+        # 1. Determine Category (Use Scraper logic if missing)
+        cat = item.get("Match_Category")
+        if not cat or cat == "Sin Categoría":
+            cat = get_category(name)
+        
+        # 2. Monto
         monto = 0
         if item.get("MontoEstimado") and float(item.get("MontoEstimado") or 0) > 0:
             monto = float(item.get("MontoEstimado"))
@@ -119,7 +143,7 @@ def load_data():
             if monto == 0:
                 monto = estimate_monto(ext.get("Tipo de Licitación", ""))
 
-        # Fecha handling (Convert to proper date object for filtering)
+        # 3. Fecha
         fecha_str = item.get("Fechas", {}).get("FechaPublicacion", "")[:10]
         fecha_obj = None
         try:
@@ -128,9 +152,9 @@ def load_data():
 
         rows.append({
             "Codigo": code,
-            "Nombre": item.get("Nombre", ""),
+            "Nombre": name,
             "Organismo": item.get("Comprador", {}).get("NombreOrganismo", ""),
-            "Categoria": item.get("Match_Category", "Sin Categoría"), # From scraper.py logic
+            "Categoria": cat,
             "Monto": monto,
             "Fecha": fecha_obj, 
             "URL": item.get("URL_Publica")
@@ -139,7 +163,7 @@ def load_data():
         
     return pd.DataFrame(rows), full_map
 
-# Load
+# Load Data
 df_raw, full_map = load_data()
 hidden_ids, saved_ids, history_ids = get_db_lists()
 
@@ -149,25 +173,25 @@ hidden_ids, saved_ids, history_ids = get_db_lists()
 with st.sidebar:
     st.title("🎛️ Filtros")
     
-    # 1. Date Range Filter
     if not df_raw.empty:
+        # Date Filter
         min_d = df_raw["Fecha"].min()
         max_d = df_raw["Fecha"].max()
-        # Handle cases where dates might be NaT
         if pd.isna(min_d): min_d = date.today()
         if pd.isna(max_d): max_d = date.today()
+        date_range = st.date_input("📅 Fecha Publicación", [min_d, max_d])
         
-        date_range = st.date_input("📅 Rango Fecha Publicación", [min_d, max_d])
+        # Category Filter
+        all_cats = sorted(df_raw["Categoria"].astype(str).unique().tolist())
+        sel_cats = st.multiselect("🏷️ Categoría", all_cats)
+        
+        # Organismo Filter
+        all_orgs = sorted(df_raw["Organismo"].astype(str).unique().tolist())
+        sel_orgs = st.multiselect("🏢 Organismo", all_orgs)
     else:
         date_range = []
-
-    # 2. Category Filter
-    all_cats = sorted(df_raw["Categoria"].astype(str).unique().tolist()) if not df_raw.empty else []
-    sel_cats = st.multiselect("🏷️ Categoría", all_cats, default=[])
-    
-    # 3. Organismo Filter
-    all_orgs = sorted(df_raw["Organismo"].astype(str).unique().tolist()) if not df_raw.empty else []
-    sel_orgs = st.multiselect("🏢 Organismo", all_orgs, default=[])
+        sel_cats = []
+        sel_orgs = []
 
     st.divider()
     if st.button("🔄 Refrescar Datos", use_container_width=True):
@@ -178,10 +202,10 @@ with st.sidebar:
 # 🧠 APPLY FILTERS & LOGIC
 # ==========================================
 if not df_raw.empty:
-    # A. Filter Hidden (Base)
+    # A. Filter Hidden
     df_visible = df_raw[~df_raw["Codigo"].isin(hidden_ids)].copy()
 
-    # B. Apply Sidebar Filters
+    # B. Apply Filters
     if len(date_range) == 2:
         df_visible = df_visible[
             (df_visible["Fecha"] >= date_range[0]) & 
@@ -192,24 +216,20 @@ if not df_raw.empty:
     if sel_orgs:
         df_visible = df_visible[df_visible["Organismo"].isin(sel_orgs)]
 
-    # C. Prepare UI Columns
-    # 1. New Flag
+    # C. UI Columns
     new_mask = ~df_visible["Codigo"].isin(history_ids)
     df_visible["Nuevo"] = False
     df_visible.loc[new_mask, "Nuevo"] = True
     
-    # 2. Saved Flag (Checkbox)
     df_visible["⭐"] = df_visible["Codigo"].isin(saved_ids)
+    df_visible["🗑️"] = False # Default unchecked
     
-    # 3. Delete Flag (Checkbox - Default False)
-    df_visible["🗑️"] = False
-    
-    # D. Mark New as Seen (in DB)
+    # Mark New as Seen
     new_codes = df_visible.loc[new_mask, "Codigo"].tolist()
     if new_codes:
         db_mark_seen(new_codes)
         
-    # E. Create Saved Subset for Tab 2
+    # Saved View
     df_saved_view = df_raw[df_raw["Codigo"].isin(saved_ids)].copy()
     df_saved_view["⭐"] = True
     df_saved_view["🗑️"] = False
@@ -224,158 +244,136 @@ else:
 # ==========================================
 st.title("Monitor Licitaciones IDIEM")
 
+# --- DETAIL SELECTOR (Replaces Row Click) ---
+# Since data_editor doesn't support selection, we use this dropdown
+all_options = df_visible["Codigo"].tolist() if not df_visible.empty else []
+if df_saved_view is not None and not df_saved_view.empty:
+    all_options.extend(df_saved_view["Codigo"].tolist())
+all_options = sorted(list(set(all_options)))
+
+# Selector in Expander to save space
+with st.expander("🔎 Ver Detalle de Licitación (Seleccionar ID)", expanded=False):
+    sel_code = st.selectbox("Buscar por ID:", [""] + all_options, format_func=lambda x: f"{x} - {full_map.get(x, {}).get('Nombre','')[:60]}..." if x else "Seleccionar...")
+    if sel_code and sel_code != st.session_state.selected_code:
+        st.session_state.selected_code = sel_code
+        # No rerun needed here, tabs will handle it
+
 tab_main, tab_saved, tab_detail = st.tabs(["📥 Disponibles", "⭐ Guardadas", "📄 Ficha Técnica"])
 
-# --- DATA EDITOR HANDLER ---
 def handle_editor_changes(edited_df, original_df):
-    """Detects clicks on checkboxes and updates DB."""
-    # 1. Detect Save Changes
+    """Detects checkbox clicks."""
+    # Save Click
     changes_save = edited_df["⭐"] != original_df["⭐"]
-    changed_rows_save = edited_df[changes_save]
-    
-    for idx, row in changed_rows_save.iterrows():
-        code = row["Codigo"]
-        is_checked = row["⭐"]
-        db_toggle_save(code, is_checked)
-        return True # Trigger rerun
-
-    # 2. Detect Delete Clicks
-    # Note: Trigger if User checks the Trash bin
-    changes_hide = edited_df["🗑️"] == True 
-    changed_rows_hide = edited_df[changes_hide]
-    
-    for idx, row in changed_rows_hide.iterrows():
-        code = row["Codigo"]
-        db_hide_permanent(code)
+    if changes_save.any():
+        row = edited_df[changes_save].iloc[0]
+        db_toggle_save(row["Codigo"], row["⭐"])
         return True
-        
+
+    # Trash Click
+    changes_hide = edited_df["🗑️"] == True 
+    if changes_hide.any():
+        row = edited_df[changes_hide].iloc[0]
+        db_hide_permanent(row["Codigo"])
+        return True
     return False
 
-# --- TAB 1: DISPONIBLES ---
+# --- TAB 1 ---
 with tab_main:
-    st.caption(f"Mostrando {len(df_visible)} licitaciones según filtros.")
+    st.caption(f"Registros encontrados: {len(df_visible)}")
     
     if not df_visible.empty:
-        # Configuration for the Editable Grid
+        # Sort: Newest first
+        df_display = df_visible.sort_values(by=["Nuevo", "Fecha"], ascending=[False, False])
+        
         column_cfg = {
-            "⭐": st.column_config.CheckboxColumn("Guardar", help="Marcar como interesante", width="small"),
-            "🗑️": st.column_config.CheckboxColumn("Ocultar", help="Mover a papelera", width="small"),
-            "Nuevo": st.column_config.CheckboxColumn("🆕", width="small", disabled=True), # Read-only
-            "Codigo": st.column_config.TextColumn("ID", width="medium"),
-            "Nombre": st.column_config.TextColumn("Nombre Licitación", width="large"),
-            "Categoria": st.column_config.TextColumn("Categoría", width="medium"),
-            "Monto": st.column_config.NumberColumn("Monto ($)", format="$%d"),
-            "Fecha": st.column_config.DateColumn("Fecha", format="DD/MM/YYYY"),
-            "URL": st.column_config.LinkColumn("Link", display_text="Ver"),
-            "Organismo": st.column_config.TextColumn("Organismo"),
-        }
-        
-        # We use a key based on length/filter to ensure freshness
-        unique_key = f"editor_main_{len(df_visible)}_{st.session_state.get('last_update', 0)}"
-
-        edited_main = st.data_editor(
-            df_visible,
-            column_config=column_cfg,
-            column_order=["⭐", "🗑️", "Nuevo", "Codigo", "Nombre", "Categoria", "Monto", "Fecha", "Organismo"],
-            hide_index=True,
-            use_container_width=True,
-            height=600,
-            key=unique_key,
-            on_select="rerun", # Allow row selection
-            selection_mode="single-row"
-        )
-        
-        # Detect Checkbox Clicks
-        if handle_editor_changes(edited_main, df_visible):
-            st.session_state.last_update = datetime.now().timestamp()
-            st.rerun()
-
-        # Detect Row Selection (for Detail View)
-        if len(edited_main.selection.rows) > 0:
-            idx = edited_main.selection.rows[0]
-            code = df_visible.iloc[idx]["Codigo"]
-            if st.session_state.selected_code != code:
-                st.session_state.selected_code = code
-                st.rerun()
-
-# --- TAB 2: GUARDADAS ---
-with tab_saved:
-    if not df_saved_view.empty:
-        column_cfg_saved = {
-            "⭐": st.column_config.CheckboxColumn("Guardada", width="small"),
+            "⭐": st.column_config.CheckboxColumn("Guardar", width="small"),
             "🗑️": st.column_config.CheckboxColumn("Ocultar", width="small"),
-            "Nuevo": st.column_config.Column(hidden=True),
+            "Nuevo": st.column_config.CheckboxColumn("🆕", width="small", disabled=True),
             "Codigo": st.column_config.TextColumn("ID", width="medium"),
             "Nombre": st.column_config.TextColumn("Nombre", width="large"),
             "Monto": st.column_config.NumberColumn("Monto", format="$%d"),
+            "URL": st.column_config.LinkColumn("Link", display_text="Abrir"),
             "Fecha": st.column_config.DateColumn("Fecha", format="DD/MM/YYYY"),
         }
+
+        # Unique Key forces refresh when data changes
+        ukey = f"main_{len(df_display)}_{st.session_state.get('last_update',0)}"
         
-        unique_key_saved = f"editor_saved_{len(df_saved_view)}_{st.session_state.get('last_update', 0)}"
+        edited_main = st.data_editor(
+            df_display,
+            column_config=column_cfg,
+            column_order=["⭐", "🗑️", "Nuevo", "Categoria", "Codigo", "Nombre", "Monto", "Fecha", "URL"],
+            hide_index=True,
+            use_container_width=True,
+            height=600,
+            key=ukey
+        )
+        
+        if handle_editor_changes(edited_main, df_display):
+            st.session_state.last_update = datetime.now().timestamp()
+            st.rerun()
+
+# --- TAB 2 ---
+with tab_saved:
+    if not df_saved_view.empty:
+        ukey_saved = f"saved_{len(df_saved_view)}_{st.session_state.get('last_update',0)}"
         
         edited_saved = st.data_editor(
             df_saved_view,
-            column_config=column_cfg_saved,
-            column_order=["⭐", "Codigo", "Nombre", "Categoria", "Monto", "Fecha", "Organismo"],
+            column_config={
+                "⭐": st.column_config.CheckboxColumn("Guardada", width="small"),
+                "🗑️": st.column_config.CheckboxColumn("Ocultar", width="small"),
+                "Codigo": st.column_config.TextColumn("ID", width="medium"),
+                "URL": st.column_config.LinkColumn("Link", display_text="Abrir"),
+            },
+            column_order=["⭐", "Codigo", "Nombre", "Categoria", "Monto", "Fecha", "URL"],
             hide_index=True,
             use_container_width=True,
-            key=unique_key_saved,
-            on_select="rerun",
-            selection_mode="single-row"
+            key=ukey_saved
         )
         
         if handle_editor_changes(edited_saved, df_saved_view):
             st.session_state.last_update = datetime.now().timestamp()
             st.rerun()
-            
-        if len(edited_saved.selection.rows) > 0:
-            idx = edited_saved.selection.rows[0]
-            code = df_saved_view.iloc[idx]["Codigo"]
-            if st.session_state.selected_code != code:
-                st.session_state.selected_code = code
-                st.rerun()
     else:
-        st.info("No tienes licitaciones guardadas.")
+        st.info("No hay licitaciones guardadas.")
 
-# --- TAB 3: DETAIL VIEW ---
+# --- TAB 3 ---
 with tab_detail:
     if st.session_state.selected_code and st.session_state.selected_code in full_map:
         code = st.session_state.selected_code
         data = full_map[code]
         
-        # Header
         st.subheader(data.get("Nombre"))
         st.caption(f"ID: {code} | Categ: {data.get('Match_Category', 'General')}")
         
-        # Actions (Backup buttons in detail view)
-        c1, c2 = st.columns([1, 4])
-        is_saved = code in saved_ids
-        with c1:
-             if st.button("⭐/❌ Toggle Guardar", key="btn_detail_save"):
-                 db_toggle_save(code, not is_saved)
-                 st.rerun()
+        # Actions
+        col_a, col_b = st.columns([1, 4])
+        with col_a:
+            is_s = code in saved_ids
+            if st.button("❌ Quitar" if is_s else "⭐ Guardar", key="btn_det_save"):
+                db_toggle_save(code, not is_s)
+                st.rerun()
         
         st.divider()
-        
-        # Content
-        col1, col2 = st.columns(2)
+        c1, c2 = st.columns(2)
         sec1 = data.get("ExtendedMetadata", {}).get("Section_1_Características", {})
         
-        with col1:
+        with c1:
              st.write(f"**Organismo:** {data.get('Comprador', {}).get('NombreOrganismo', '-')}")
              st.write(f"**Tipo:** {sec1.get('Tipo de Licitación', '-')}")
-             st.write(f"**Cierre:** {data.get('Fechas', {}).get('FechaCierre', '')}")
-             
-        with col2:
-             st.markdown(f"[🔗 Abrir en MercadoPúblico]({data.get('URL_Publica')})")
-             if data.get("MontoEstimado"): 
+             st.write(f"**Estado:** {sec1.get('Estado', '-')}")
+        with c2:
+             st.markdown(f"[🔗 Ver en MercadoPúblico]({data.get('URL_Publica')})")
+             if data.get("MontoEstimado"):
                  st.write(f"**Monto:** :blue[${float(data.get('MontoEstimado')):,.0f}]")
-             elif sec1.get("Presupuesto"):
-                 st.write(f"**Presupuesto:** {sec1.get('Presupuesto')}")
+             else:
+                 st.write(f"**Presupuesto:** {sec1.get('Presupuesto', 'No informado')}")
 
         st.markdown("##### Descripción")
         st.info(data.get("Descripcion", ""))
         
+        # Items Table
         items = data.get('Items', {}).get('Listado', [])
         if not items and 'DetalleArticulos' in data: items = data['DetalleArticulos']
         
@@ -383,4 +381,4 @@ with tab_detail:
             st.markdown("###### Items")
             st.dataframe(pd.json_normalize(items), use_container_width=True)
     else:
-        st.markdown("<br><h3 style='text-align:center; color:#ccc'>👈 Selecciona una fila para ver detalle</h3>", unsafe_allow_html=True)
+        st.markdown("<br><h3 style='text-align:center; color:#ccc'>👈 Selecciona un ID en el buscador superior</h3>", unsafe_allow_html=True)
