@@ -5,7 +5,6 @@ import os
 import re
 import sqlite3
 from datetime import datetime
-from st_aggrid import AgGrid, GridOptionsBuilder, JsCode
 
 # --- CONFIGURATION ---
 st.set_page_config(page_title="Monitor Licitaciones IDIEM", layout="wide", page_icon="🏗️")
@@ -15,7 +14,7 @@ UTM_VALUE = 69611
 JSON_FILE = "FINAL_PRODUCTION_DATA.json"
 DB_FILE = "licitaciones_state.db"
 
-# Custom CSS for "New" badge and Layout
+# Custom CSS
 st.markdown("""
     <style>
         .block-container { padding-top: 1rem; padding-bottom: 2rem; }
@@ -24,7 +23,6 @@ st.markdown("""
         .stTabs [data-baseweb="tab"] { height: 50px; background-color: #f0f2f6; border-radius: 4px 4px 0 0; }
         .stTabs [aria-selected="true"] { background-color: #ffffff; border-top: 2px solid #ff4b4b; }
         div.stButton > button:first-child { border-radius: 5px; }
-        .new-badge { background-color: #28a745; color: white; padding: 2px 6px; border-radius: 4px; font-size: 0.8em; font-weight: bold; }
     </style>
 """, unsafe_allow_html=True)
 
@@ -35,14 +33,10 @@ if 'selected_code' not in st.session_state:
 # 🗄️ SQLITE DATABASE (STATE MANAGEMENT)
 # ==========================================
 def init_db():
-    """Initializes the SQLite database with necessary tables."""
     conn = sqlite3.connect(DB_FILE, check_same_thread=False)
     c = conn.cursor()
-    # Table for Hidden Tenders (Trash)
     c.execute('CREATE TABLE IF NOT EXISTS hidden (code TEXT PRIMARY KEY, timestamp DATETIME)')
-    # Table for Saved Tenders (Favorites)
     c.execute('CREATE TABLE IF NOT EXISTS saved (code TEXT PRIMARY KEY, timestamp DATETIME, note TEXT)')
-    # Table for History (To track "New" status)
     c.execute('CREATE TABLE IF NOT EXISTS history (code TEXT PRIMARY KEY, first_seen DATETIME)')
     conn.commit()
     return conn
@@ -50,7 +44,6 @@ def init_db():
 conn = init_db()
 
 def get_db_lists():
-    """Returns sets of hidden, saved, and history codes."""
     c = conn.cursor()
     hidden = {row[0] for row in c.execute('SELECT code FROM hidden').fetchall()}
     saved = {row[0] for row in c.execute('SELECT code FROM saved').fetchall()}
@@ -69,19 +62,15 @@ def db_toggle_save(code):
 
 def db_hide_permanent(code):
     c = conn.cursor()
-    # Remove from saved if exists
     c.execute('DELETE FROM saved WHERE code = ?', (code,))
-    # Add to hidden
     c.execute('INSERT OR REPLACE INTO hidden (code, timestamp) VALUES (?, ?)', (code, datetime.now()))
     conn.commit()
-    st.toast(f"🗑️ Licitación {code} ocultada permanentemente.")
+    st.toast(f"🗑️ Licitación {code} ocultada.")
 
 def db_mark_seen(codes):
-    """Marks a list of codes as seen in history."""
     if not codes: return
     c = conn.cursor()
     now = datetime.now()
-    # executemany is faster for bulk updates
     data = [(c, now) for c in codes]
     c.executemany('INSERT OR IGNORE INTO history (code, first_seen) VALUES (?, ?)', data)
     conn.commit()
@@ -108,10 +97,7 @@ def estimate_monto_from_text(text):
         except: pass
     numbers = sorted(numbers)
     if not numbers: return 0, "No detectado"
-    
-    # Simple Heuristic
-    val = numbers[0]
-    return val * UTM_VALUE, "Est. UTM"
+    return numbers[0] * UTM_VALUE, "Est. UTM"
 
 # ==========================================
 # 🛠️ DATA LOADING
@@ -130,7 +116,7 @@ def load_data(json_path):
     for item in data:
         code = item.get("CodigoExterno")
         
-        # --- MONTO LOGIC ---
+        # Monto Logic
         monto_final = 0
         api_monto = item.get("MontoEstimado")
         if api_monto and float(api_monto) > 0:
@@ -143,14 +129,16 @@ def load_data(json_path):
                 est, _ = estimate_monto_from_text(ext.get("Tipo de Licitación", ""))
                 monto_final = est
         
+        # Display Name Truncation
+        name_clean = item.get("Nombre", "")
+        
         row = {
+            "Estado": "", # Placeholder
             "Codigo": code,
-            "Nombre": item.get("Nombre", ""),
-            "Organismo": item.get("Comprador", {}).get("NombreOrganismo", ""),
+            "Nombre": name_clean,
             "Monto": monto_final,
             "Fecha": item.get("Fechas", {}).get("FechaPublicacion", "")[:10] if item.get("Fechas") else "",
-            "Categoria": item.get("Match_Category", "-"),
-            "URL": item.get("URL_Publica")
+            "Organismo": item.get("Comprador", {}).get("NombreOrganismo", ""),
         }
         rows.append(row)
         full_details_map[code] = item 
@@ -167,24 +155,22 @@ if not df_raw.empty:
     # 1. Filter out Hidden
     df_visible = df_raw[~df_raw["Codigo"].isin(hidden_ids)].copy()
     
-    # 2. Determine "New" Status (Not in History)
-    # Codes in visible but NOT in history are New
+    # 2. Identify "New" (Not in history)
+    # Logic: If it is NOT in history, it is New.
     new_mask = ~df_visible["Codigo"].isin(history_ids)
+    
+    # 3. Assign Status Label
     df_visible["Estado"] = "Leído"
     df_visible.loc[new_mask, "Estado"] = "🆕 Nuevo"
+    df_visible.loc[df_visible["Codigo"].isin(saved_ids), "Estado"] = "⭐ Guardado"
     
-    # 3. Mark these as seen in DB immediately (so next time they aren't new)
-    # Note: You might prefer to mark them seen only when clicked. 
-    # Current approach: If they appear in the "Available" list, they are now "Seen".
+    # 4. Auto-update History for "New" items (so they aren't new next time)
     new_codes = df_visible.loc[new_mask, "Codigo"].tolist()
     if new_codes:
         db_mark_seen(new_codes)
-        # Update our local set for display logic consistency if needed immediately
-        # (Optional, streamlit rerun handles it next time)
-
-    # 4. Create Saved DF
-    df_saved = df_raw[df_raw["Codigo"].isin(saved_ids)].copy()
-    df_saved["Estado"] = "⭐ Guardado"
+    
+    # 5. Create specific subsets
+    df_saved = df_visible[df_visible["Codigo"].isin(saved_ids)].copy()
 
 else:
     df_visible = pd.DataFrame()
@@ -196,19 +182,17 @@ else:
 with st.sidebar:
     st.title("🎛️ Control")
     st.metric("Disponibles", len(df_visible))
-    st.metric("Nuevas Hoy", len(new_codes) if 'new_codes' in locals() else 0)
+    st.metric("Nuevas (Hoy)", len(new_codes) if 'new_codes' in locals() else 0)
     st.metric("Guardadas", len(df_saved))
     
     if st.button("🔄 Refrescar Datos", use_container_width=True):
         st.cache_data.clear()
         st.rerun()
-    
+
     st.divider()
-    st.caption("ℹ️ Nota: En la versión gratuita, los datos guardados se reinician si la app se suspende.")
-    
     if st.session_state.selected_code:
-        st.info(f"Seleccionado: {st.session_state.selected_code}")
-        if st.button("🔙 Volver al Listado"):
+        st.info(f"Viendo: {st.session_state.selected_code}")
+        if st.button("🔙 Deseleccionar"):
             st.session_state.selected_code = None
             st.rerun()
 
@@ -216,58 +200,53 @@ st.title("🏗️ Monitor Licitaciones IDIEM")
 
 tab_main, tab_saved, tab_detail = st.tabs(["📥 Disponibles", "⭐ Guardadas", "📄 Ficha Técnica"])
 
-# --- AG GRID FUNCTION ---
-def render_grid(df, key):
+# --- GRID FUNCTION (NATIVE DATAFRAME) ---
+def render_native_grid(df, key):
     if df.empty:
-        st.info("Sin registros.")
+        st.info("No hay datos para mostrar.")
         return
+
+    # 🎨 Styling: Green for New, Yellow for Saved
+    def highlight_status(val):
+        if 'Nuevo' in str(val):
+            return 'background-color: #d4edda; color: #155724; font-weight: bold'
+        elif 'Guardado' in str(val):
+            return 'background-color: #fff3cd; color: #856404; font-weight: bold'
+        return ''
+
+    # Apply Style
+    styled_df = df.style.map(highlight_status, subset=['Estado'])
     
-    gb = GridOptionsBuilder.from_dataframe(df)
-    gb.configure_pagination(paginationAutoPageSize=False, paginationPageSize=20)
-    gb.configure_selection('single', use_checkbox=True)
-    
-    # Status Column Styling
-    gb.configure_column("Estado", width=120, pinned="left", cellStyle=JsCode("""
-        function(params) {
-            if (params.value.includes('Nuevo')) { return {'backgroundColor': '#28a745', 'color': 'white', 'fontWeight': 'bold', 'textAlign': 'center', 'borderRadius': '4px'}; }
-            if (params.value.includes('Guardado')) { return {'backgroundColor': '#ffc107', 'color': 'black', 'fontWeight': 'bold', 'textAlign': 'center'}; }
-            return {'color': '#888', 'textAlign': 'center'};
-        }
-    """))
-    
-    gb.configure_column("Codigo", width=100, pinned="left")
-    gb.configure_column("Nombre", width=400, wrapText=True, autoHeight=True)
-    gb.configure_column("Monto", type=["numericColumn"], valueFormatter="x.toLocaleString('es-CL', {style: 'currency', currency: 'CLP'})", width=120)
-    gb.configure_column("URL", hide=True)
-    
-    grid_response = AgGrid(
-        df, 
-        gridOptions=gb.build(), 
-        allow_unsafe_jscode=True, 
-        height=500, 
-        theme='streamlit',
-        key=key,
-        update_mode="SELECTION_CHANGED"
+    # Formatting Monto
+    styled_df = styled_df.format({"Monto": "${:,.0f}"})
+
+    # Render with Selection
+    event = st.dataframe(
+        styled_df,
+        column_order=["Estado", "Codigo", "Nombre", "Monto", "Organismo", "Fecha"],
+        hide_index=True,
+        on_select="rerun",
+        selection_mode="single-row",
+        use_container_width=True,
+        height=500,
+        key=key
     )
-    
-    sel = grid_response['selected_rows']
-    if isinstance(sel, pd.DataFrame) and not sel.empty:
-        code = sel.iloc[0]['Codigo']
-        if st.session_state.selected_code != code:
-            st.session_state.selected_code = code
-            st.rerun()
-    elif isinstance(sel, list) and len(sel) > 0:
-        code = sel[0]['Codigo']
+
+    # Handle Selection
+    if event.selection.rows:
+        idx = event.selection.rows[0]
+        # Map visual index back to dataframe index
+        code = df.iloc[idx]["Codigo"]
         if st.session_state.selected_code != code:
             st.session_state.selected_code = code
             st.rerun()
 
-# --- TABS CONTENT ---
+# --- TAB CONTENT ---
 with tab_main:
-    render_grid(df_visible, "grid_main")
+    render_native_grid(df_visible, "grid_main")
 
 with tab_saved:
-    render_grid(df_saved, "grid_saved")
+    render_native_grid(df_saved, "grid_saved")
 
 with tab_detail:
     if st.session_state.selected_code and st.session_state.selected_code in full_map:
@@ -297,7 +276,6 @@ with tab_detail:
         st.subheader(data.get("Nombre"))
         st.caption(f"ID: {code} | Organismo: {data.get('Comprador', {}).get('NombreOrganismo', '')}")
         
-        # Details
         sec1 = data.get("ExtendedMetadata", {}).get("Section_1_Características", {})
         col1, col2 = st.columns(2)
         with col1:
@@ -307,6 +285,7 @@ with tab_detail:
              st.markdown(f"[🔗 Ver en MercadoPúblico]({data.get('URL_Publica')})")
              pres = sec1.get("Presupuesto")
              if pres: st.write(f"**Presupuesto:** :green[{pres}]")
+             elif data.get("MontoEstimado"): st.write(f"**Monto:** :blue[${float(data.get('MontoEstimado',0)):,.0f}]")
         
         st.markdown("##### 📝 Descripción")
         st.info(data.get("Descripcion", "No disponible"))
@@ -317,7 +296,7 @@ with tab_detail:
         
         if items:
             st.markdown("###### 📦 Items / Rubros")
-            st.dataframe(pd.json_normalize(items)[['NombreProducto', 'Cantidad', 'UnidadMedida', 'Descripcion']], use_container_width=True)
+            st.dataframe(pd.json_normalize(items), use_container_width=True)
             
     else:
         st.markdown("<br><br><h3 style='text-align: center; color: #ccc;'>👈 Selecciona una licitación</h3>", unsafe_allow_html=True)
